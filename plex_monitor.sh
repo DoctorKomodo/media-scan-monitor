@@ -1,48 +1,73 @@
 #!/bin/bash
+#
+# Plex partial-scan monitor.
+#
+# All configuration comes from environment variables (see docker-compose.yml).
+# The only paths this script knows about are the *container-internal* media
+# paths supplied via PLEX_LIBRARIES — the host-side source of each mount is a
+# compose concern and can change during migrations without editing anything here.
+#
+# Backward compatibility: if CONFIG_FILE points at an existing file it is
+# sourced first, so the old plex_monitor.conf (PLEX_TOKEN=...) still works.
 
-### Wait for inotify limit to be configured
-REQUIRED_LIMIT=131072
-MAX_WAIT=180
-WAITED=0
+set -o pipefail
 
-while (( $(cat /proc/sys/fs/inotify/max_user_watches) < REQUIRED_LIMIT )); do
-    if (( WAITED >= MAX_WAIT )); then
-        echo "[$(date)] ERROR: inotify limit not set after ${MAX_WAIT}s, exiting" >> "$LOGFILE"
+### Optional legacy config file (kept for bare-metal deployments)
+CONFIG_FILE="${CONFIG_FILE:-}"
+if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+fi
+
+### Configuration (env-driven, with defaults matching the original script)
+PLEX_SERVER="${PLEX_SERVER:?PLEX_SERVER must be set (e.g. https://host:32400)}"
+PLEX_LIBRARIES="${PLEX_LIBRARIES:?PLEX_LIBRARIES must be set (e.g. /data/media/movies:1,/data/media/tvseries:2)}"
+WAIT_SEC="${WAIT_SEC:-30}"
+MEDIA_EXTENSIONS="${MEDIA_EXTENSIONS:-mkv|mp4|avi|ts|m4v|mov|wmv|flv|webm|srt|smi|ssa|ass|sub|idx|sup|vtt}"
+LOGFILE="${LOGFILE:-/dev/stdout}"
+REQUIRED_INOTIFY_WATCHES="${REQUIRED_INOTIFY_WATCHES:-131072}"
+INOTIFY_WAIT_MAX="${INOTIFY_WAIT_MAX:-180}"
+
+### Token: prefer a secret file (Docker secret), fall back to PLEX_TOKEN env
+if [[ -n "${PLEX_TOKEN_FILE:-}" && -f "$PLEX_TOKEN_FILE" ]]; then
+    PLEX_TOKEN="$(< "$PLEX_TOKEN_FILE")"
+    PLEX_TOKEN="${PLEX_TOKEN//$'\n'/}"   # strip trailing newline
+fi
+: "${PLEX_TOKEN:?PLEX_TOKEN not provided (set PLEX_TOKEN_FILE, PLEX_TOKEN, or CONFIG_FILE)}"
+
+### Parse PLEX_LIBRARIES ("path:id,path:id") into the library map + watch list
+declare -A LIBRARY_MAP
+MONITOR_DIRS=()
+IFS=',' read -ra _pairs <<< "$PLEX_LIBRARIES"
+for _pair in "${_pairs[@]}"; do
+    _pair="${_pair// /}"                 # tolerate spaces around commas
+    [[ -z "$_pair" ]] && continue
+    _path="${_pair%:*}"                  # everything before the last colon
+    _id="${_pair##*:}"                   # the Plex section id
+    if [[ -z "$_path" || -z "$_id" || "$_path" == "$_pair" ]]; then
+        echo "[$(date)] ERROR: invalid PLEX_LIBRARIES entry: '$_pair'" >&2
         exit 1
     fi
-    sleep 10
-    ((WAITED += 10))
+    [[ "$_path" != */ ]] && _path="${_path}/"   # normalize trailing slash
+    LIBRARY_MAP["$_path"]="$_id"
+    MONITOR_DIRS+=("$_path")
 done
 
-### Configuration
-CONFIG_FILE="${CONFIG_FILE:-/volume2/scripts/plex_monitor.conf}"
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "[$(date)] ERROR: Config file not found: $CONFIG_FILE" >&2
-    exit 1
+### Parse IGNORE_DIRS (comma-separated)
+IFS=',' read -ra IGNORE_DIRS <<< "${IGNORE_DIRS:-@eaDir,#snapshot}"
+
+### Wait for inotify watch limit to be configured (host-level kernel setting).
+### Set REQUIRED_INOTIFY_WATCHES=0 to skip this gate entirely.
+if (( REQUIRED_INOTIFY_WATCHES > 0 )) && [[ -r /proc/sys/fs/inotify/max_user_watches ]]; then
+    WAITED=0
+    while (( $(cat /proc/sys/fs/inotify/max_user_watches) < REQUIRED_INOTIFY_WATCHES )); do
+        if (( WAITED >= INOTIFY_WAIT_MAX )); then
+            echo "[$(date)] ERROR: inotify watch limit below ${REQUIRED_INOTIFY_WATCHES} after ${INOTIFY_WAIT_MAX}s, exiting" >> "$LOGFILE"
+            exit 1
+        fi
+        sleep 10
+        ((WAITED += 10))
+    done
 fi
-source "$CONFIG_FILE"
-
-MEDIA_EXTENSIONS="mkv|mp4|avi|ts|m4v|mov|wmv|flv|webm|srt|smi|ssa|ass|sub|idx|sup|vtt"
-PLEXSERVER="https://192-168-0-8.667d51705797471ea1da1e6234ed9f7e.plex.direct:32400"
-LOGFILE="/volume2/scripts/logs/plex_notify.log"
-WAIT_SEC=30
-
-# Directory to Library Section Mapping
-declare -A LIBRARY_MAP
-LIBRARY_MAP["/volume2/movies/"]="1"
-LIBRARY_MAP["/volume2/tvseries/"]="2"
-
-# Directories to monitor
-MONITOR_DIRS=(
-    "/volume2/movies/"
-    "/volume2/tvseries/"
-)
-
-# Directories to ignore (Synology system folders)
-IGNORE_DIRS=(
-    "@eaDir"
-    "#snapshot"
-)
 
 ### Functions
 urlencode() {
@@ -73,9 +98,9 @@ send_plex_refresh() {
     local encoded_path
     encoded_path=$(urlencode "$scan_path")
 
-    local url="${PLEXSERVER}/library/sections/${library_id}/refresh?path=${encoded_path}&X-Plex-Token=${PLEX_TOKEN}"
+    local url="${PLEX_SERVER}/library/sections/${library_id}/refresh?path=${encoded_path}&X-Plex-Token=${PLEX_TOKEN}"
 
-    echo "[$(date)] Request URL: ${PLEXSERVER}/library/sections/${library_id}/refresh?path=${encoded_path}" >> "$LOGFILE"
+    echo "[$(date)] Request URL: ${PLEX_SERVER}/library/sections/${library_id}/refresh?path=${encoded_path}" >> "$LOGFILE"
 
     local curl_response
     curl_response=$(curl -s -w "HTTP_STATUS:%{http_code}" -X GET "$url" 2>&1)
@@ -137,6 +162,7 @@ INCLUDE_PATTERN="\.(${MEDIA_EXTENSIONS})$"
 
 echo "[$(date)] ========================================" >> "$LOGFILE"
 echo "[$(date)] Starting Plex monitoring (targeted refresh)" >> "$LOGFILE"
+echo "[$(date)] Plex server: ${PLEX_SERVER}" >> "$LOGFILE"
 echo "[$(date)] Monitoring: ${MONITOR_DIRS[*]}" >> "$LOGFILE"
 echo "[$(date)] Ignoring: ${IGNORE_DIRS[*]}" >> "$LOGFILE"
 echo "[$(date)] Debounce interval: ${WAIT_SEC}s" >> "$LOGFILE"

@@ -1,0 +1,48 @@
+services:
+  plex-monitor:
+    # Pull the prebuilt image published by GitHub Actions.
+    image: ghcr.io/doctorkomodo/syno_plex_change_monitor:latest
+    # Fallback: build locally if you run `docker compose build` or the image
+    # isn't available (e.g. `docker compose up --build`).
+    build: .
+    container_name: plex-monitor
+    restart: unless-stopped
+
+    environment:
+      # --- Plex connection ---------------------------------------------------
+      PLEX_SERVER: "https://192-168-0-8.667d51705797471ea1da1e6234ed9f7e.plex.direct:32400"
+
+      # --- Library map: <container-path>:<plex-section-id>, comma-separated ---
+      # These are the paths *inside this container* (and inside Plex). They must
+      # match how Plex sees the media so partial scans target the right folder.
+      PLEX_LIBRARIES: "/data/media/movies:1,/data/media/tvseries:2"
+
+      # --- Tuning ------------------------------------------------------------
+      WAIT_SEC: "30"
+      IGNORE_DIRS: "@eaDir,#snapshot"
+      LOGFILE: "/dev/stdout"           # let `docker logs` capture output
+      TZ: "Europe/Oslo"                # for correct log timestamps
+
+      # --- Secret (read from a Docker secret file, never inline in env) -------
+      PLEX_TOKEN_FILE: "/run/secrets/plex_token"
+
+    volumes:
+      # host (NAS) source : container target
+      #
+      # The container target must stay /data/media/... — that is the stable
+      # contract the script and Plex agree on. Only the host source changes as
+      # you migrate. Pick the block that matches your current layout:
+
+      # During transition (separate Synology shares):
+      - /volume2/movies:/data/media/movies
+      - /volume2/tvseries:/data/media/tvseries
+
+      # After unification (single share) — replace the two lines above with:
+      # - /volume2/data/media:/data/media
+
+    secrets:
+      - plex_token
+
+secrets:
+  plex_token:
+    file: ./plex_token.txt    # gitignored; chmod 600 on the NAS

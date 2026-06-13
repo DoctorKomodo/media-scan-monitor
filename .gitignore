@@ -1,0 +1,9 @@
+# Secrets — never commit the Plex token
+plex_token.txt
+plex_monitor.conf
+*.env
+.env
+
+# Logs
+logs/
+*.log

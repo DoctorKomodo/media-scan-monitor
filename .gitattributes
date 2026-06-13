@@ -1,0 +1,7 @@
+# Force LF for files that run inside the Linux container.
+# CRLF here would break the shebang / shell parsing.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
