@@ -28,17 +28,10 @@ services:
 
     volumes:
       # host (NAS) source : container target
-      #
-      # The container target must stay /data/media/... — that is the stable
-      # contract the script and Plex agree on. Only the host source changes as
-      # you migrate. Pick the block that matches your current layout:
-
-      # During transition (separate Synology shares):
+      # The container target must match the paths in PLEX_LIBRARIES (and how
+      # Plex sees the media). Sources must be local /volume2 paths for inotify.
       - /volume2/movies:/data/media/movies
       - /volume2/tvseries:/data/media/tvseries
-
-      # After unification (single share) — replace the two lines above with:
-      # - /volume2/data/media:/data/media
 
     secrets:
       - plex_token

@@ -21,7 +21,7 @@ This script solves that by running `inotifywait` directly on the NAS itself, whe
 
 The partial-scan API call sends Plex a path, and **that path must match how Plex itself sees the media**, not how the NAS sees it. If Plex runs in its own container with the library mounted at `/data/media/tvseries`, then the monitor must also refer to the media as `/data/media/tvseries` — otherwise Plex can't match the path to a library and silently falls back to a full scan (or does nothing).
 
-The script only ever works with these *Plex-facing* paths (configured via `PLEX_LIBRARIES`). When running in Docker you simply bind-mount the NAS media to those same paths inside the monitor container, so everything lines up. The host-side source of each mount can change freely (e.g. during a storage migration) without touching the script.
+The script only ever works with these *Plex-facing* paths (configured via `PLEX_LIBRARIES`). When running in Docker you simply bind-mount the NAS media to those same paths inside the monitor container, so everything lines up. The host-side source of each mount is independent of the script.
 
 ## Configuration
 
@@ -50,7 +50,7 @@ https://your-plex-server:32400/library/sections?X-Plex-Token=YOUR_TOKEN
 
 ## Option A: Docker (recommended)
 
-Runs the monitor as a container on the NAS. Configuration lives in `docker-compose.yml`; the token lives in a Docker secret. Changing libraries or migrating storage is a compose edit — the script never changes.
+Runs the monitor as a container on the NAS. Configuration lives in `docker-compose.yml`; the token lives in a Docker secret. Changing libraries or mount paths is a compose edit — the script never changes.
 
 ### 1. Provide the token
 
@@ -74,7 +74,7 @@ volumes:
 ```
 
 - The **target** (right side) must match the path Plex uses and the paths in `PLEX_LIBRARIES`. This is the stable contract — don't change it unless Plex's own mount changes.
-- The **source** (left side) is wherever the media currently lives on the NAS. Change this freely during migrations; mix old and new locations as needed. Sources must be **local** `/volume2` paths so inotify events fire (a network-mounted source won't work).
+- The **source** (left side) is wherever the media lives on the NAS. Sources must be **local** `/volume2` paths so inotify events fire (a network-mounted source won't work).
 
 ### 3. Start it
 

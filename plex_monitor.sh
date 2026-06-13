@@ -5,7 +5,7 @@
 # All configuration comes from environment variables (see docker-compose.yml).
 # The only paths this script knows about are the *container-internal* media
 # paths supplied via PLEX_LIBRARIES — the host-side source of each mount is a
-# compose concern and can change during migrations without editing anything here.
+# compose concern, independent of this script.
 #
 # Backward compatibility: if CONFIG_FILE points at an existing file it is
 # sourced first, so the old plex_monitor.conf (PLEX_TOKEN=...) still works.
