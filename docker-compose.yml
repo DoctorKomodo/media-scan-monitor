@@ -2,9 +2,11 @@ services:
   plex-monitor:
     # Pull the prebuilt image published by GitHub Actions.
     image: ghcr.io/doctorkomodo/syno_plex_change_monitor:latest
-    # Fallback: build locally if you run `docker compose build` or the image
-    # isn't available (e.g. `docker compose up --build`).
-    build: .
+    # To build locally instead, uncomment the line below and run
+    # `docker compose build` / `docker compose up --build`. Leave it commented
+    # for normal use — Synology Container Manager tries to build on startup
+    # when this is present, which fails on the NAS.
+    # build: .
     container_name: plex-monitor
     restart: unless-stopped
 

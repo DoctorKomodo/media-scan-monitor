@@ -86,11 +86,13 @@ docker compose up -d
 docker compose logs -f
 ```
 
-To build locally instead (e.g. to test changes), the `build: .` fallback is included:
+To build locally instead (e.g. to test changes), uncomment the `build: .` line in `docker-compose.yml`, then:
 
 ```bash
 docker compose up -d --build
 ```
+
+> Keep `build:` commented for normal use. Synology Container Manager attempts to build on startup whenever it's present, which fails on the NAS — so the default is to pull the prebuilt image only.
 
 > If the GHCR package is private, run `docker login ghcr.io` on the NAS (with a PAT that has `read:packages`) before pulling, or set the package visibility to public on GitHub.
 
