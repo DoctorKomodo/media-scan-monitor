@@ -244,15 +244,23 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   `pydantic>=2`, `sqlmodel`, `asyncinotify`, `jinja2`, `tenacity`, `structlog`,
   `prometheus-client`, `cryptography`, `argon2-cffi` (or `passlib[argon2]`). No bash/curl/
   inotify-tools. **All versions pinned to the current stable release, verified at add-time.**
+  - **When this lands (install via the committed lockfile, matching CI byte-for-byte):** bring
+    `uv` into the build stage (`COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv`), `COPY`
+    `pyproject.toml` + `uv.lock` first, then `RUN uv sync --locked --no-editable` (production —
+    **omit** `--extra dev` so the dev tools are excluded), and copy the resulting `.venv` into
+    the slim runtime stage. The lockfile — not loose `pip install` — is the source of truth, so
+    the image, CI, and the dev box all resolve identically.
 - **docker-compose:** `./config:/config` (SQLite db + secret key + state), `ports: ["8080:8080"]`,
   media bind-mounts (sources MUST be on local `/volume2` for inotify). No `PLEX_*` env —
   everything is configured in the UI; only optional bootstrap (e.g. `MSM_PASSWORD_FILE` to
   seed the app password on first run).
 - **inotify watch limit:** unchanged operationally (root boot task sets it); `/ready` blocks
   until the gate passes; dashboard shows current vs required.
-- **CI:** `ci.yml` (`ruff`, `mypy`, `pytest`); update `docker-build.yml` path filters to
-  `mediascanmonitor/**` + `pyproject.toml` + `Dockerfile`; keep multi-arch GHCR publish; add
-  an image smoke test (`--help`).
+- **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
+  3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
+  `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
+  `pyproject.toml` + `uv.lock` + `Dockerfile`, ensure `uv.lock` is in the build context, keep
+  the multi-arch GHCR publish, and add an image smoke test (`docker run … --help`).
 
 ---
 

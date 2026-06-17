@@ -2,17 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, app-v2]
     paths:
       - 'mediascanmonitor/**'
       - 'tests/**'
       - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'mediascanmonitor/**'
       - 'tests/**'
       - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -23,24 +25,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
         with:
-          python-version: '3.14'
+          version: "0.11.21"        # pinned (verified); keep in sync with the dev box
+          python-version: "3.14"
+          enable-cache: true
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      # --locked asserts uv.lock is in sync with pyproject.toml and fails otherwise,
+      # so the committed lockfile is the single source of truth for installs.
+      - name: Install dependencies (locked)
+        run: uv sync --locked --extra dev
 
       - name: Ruff (lint)
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Ruff (format check)
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Mypy (type check)
-        run: mypy mediascanmonitor
+        run: uv run mypy mediascanmonitor
 
       - name: Pytest
-        run: pytest
+        run: uv run pytest

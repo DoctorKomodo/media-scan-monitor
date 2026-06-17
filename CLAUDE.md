@@ -131,6 +131,11 @@ CI runs all four on every push/PR (`.github/workflows/ci.yml`). Keep it green.
 ## Deployment (target shape; built out across phases)
 
 - **Image:** multi-stage `python:3.14-slim`, runs as non-root, `tzdata` for log timestamps.
+  Install dependencies from the committed `uv.lock` (`uv sync --locked --no-editable`, no dev
+  extras) so the image, CI, and the dev box resolve identically. When the Dockerfile lands,
+  also update `docker-build.yml` path filters to `mediascanmonitor/**` + `uv.lock` (see
+  `docs/PLAN.md` → Deployment for the full checklist). CI already enforces the lock via
+  `uv sync --locked`.
 - **Volumes:** `./config:/config` holds `app.db` + the Fernet secret key. Media sources must be
   bind-mounted from **local** storage (inotify does not work over network mounts).
 - **Config:** everything in the UI behind a single app password. Only optional bootstrap env is
