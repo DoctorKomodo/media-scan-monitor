@@ -1,175 +1,146 @@
-# Plex Monitor Script – Development Summary
+# media-scan-monitor — Development Guide
 
 ## Purpose
 
-This script monitors media directories on a Synology NAS and triggers **targeted partial scans** in Plex when media files are added, moved, or deleted. It replaces Plex's built-in filesystem monitoring which can be unreliable on NAS devices.
+`media-scan-monitor` watches media directories (originally on a Synology NAS) and triggers
+**targeted scan/refresh events** on media servers when files are added, moved, or deleted. It
+replaces unreliable built-in filesystem monitoring with a single inotify watcher that **fans
+out** notifications to any number of configured **servers** (Plex, Emby, Jellyfin,
+Audiobookshelf, or a generic webhook).
+
+It is a **Python application, shipped as a Docker image**, configured entirely from a **web
+UI** (no hand-edited config files for normal use), with state in **SQLite**.
+
+> This is a ground-up rewrite *inspired by* the original `plex_monitor.sh` Bash script. There
+> is **no migration or backward-compatibility** requirement with the Bash version. The old
+> script and its docs remain in the repo only as a behavioral reference (see "Legacy
+> reference" below).
 
 ---
 
-## Problems Solved During Development
+## Project rules (MUST follow)
 
-| Issue | Solution |
-|-------|----------|
-| Original delimiter parsing failed (`IFS=' DELIMITER '` treats each character as a delimiter) | Changed to tab character `\t'` which won't appear in filenames |
-| Full library scans on every file change | Implemented Plex's `?path=` parameter for targeted folder scanning |
-| Multiple refreshes when adding many files at once | Added debouncing per scan path with configurable wait period |
-| Synology system folders (`@eaDir`, `#snapshot`) triggering scans | Added ignore list with path matching |
-| Log file growth over time | Configured logrotate for automatic rotation |
-| inotify watch limit too low for large libraries | Set via boot task: `echo 131072 > /proc/sys/fs/inotify/max_user_watches` |
-| Plex token exposed in main script | Moved to separate config file (`plex_monitor.conf`) with restricted permissions |
+These override default behavior and apply to every change in this repo.
 
----
-
-## Key Design Decisions
-
-### 1. Targeted vs Full Library Refresh
-
-The script uses Plex's partial scan API:
-```
-/library/sections/{id}/refresh?path={encoded_path}
-```
-This scans only the specific show/movie folder rather than walking the entire library.
-
-### 2. Scan Path Level
-
-For TV shows, the scan targets the **show folder** (e.g., `/volume2/tvseries/Shoresy`), not the season folder. This ensures show-level metadata updates while still being very fast.
-
-### 3. Debouncing Strategy
-
-When a file is detected:
-- Check when that specific folder was last refreshed
-- If ≥30 seconds ago → wait 30s (to catch more incoming files), then refresh
-- If <30 seconds ago → skip (previous refresh will catch it)
-
-This means adding a full season triggers one refresh, not one per episode.
-
-### 4. Wait Period Before Refresh
-
-The 30-second delay allows for:
-- Large file transfers to complete
-- Batch operations to finish
-- Filesystem sync on NAS/RAID systems
-
-### 5. Privilege Separation
-
-- inotify limit setting runs as **root** (required for `/proc` access)
-- Monitor script runs as **regular user** (principle of least privilege)
-- Script waits for limit to be set before starting
+1. **Dependencies — current stable, verified at add-time, never from memory.** Before adding or
+   bumping *any* library, tool, plugin, or Docker base image, check the package registry /
+   official docs for the current stable version and pin that exact version. Do **not** trust
+   version numbers from training data. Keep the dependency set small; prefer the stdlib or an
+   existing dependency before adding a new one, and justify every addition.
+2. **Extensibility — adding a server type is one file.** A new backend = one new module under
+   `mediascanmonitor/servers/` implementing the `ServerAdapter` ABC + a registry entry + its
+   tests. The watcher and pipeline must **never** special-case a specific backend. Backend
+   quirks live in that backend's adapter.
+3. **Structure & typing.** One responsibility per module; respect the boundaries below. Full
+   type hints; `mypy --strict` clean. `ruff` for both lint and format. Validate every external
+   boundary (UI input, REST I/O, backend responses) with Pydantic/SQLModel — don't pass raw
+   dicts around.
+4. **Async discipline.** Async all the way down the I/O path (inotify, httpx fan-out, FastAPI
+   share one event loop). No blocking calls in the event loop.
+5. **Security.** Never log secrets; redact them in API responses; encrypt secrets at rest; keep
+   tokens out of logged URLs. The container runs as a non-root user.
+6. **Testing — pyramid.** Many unit tests (adapters, router, filters, debounce), a few
+   integration tests (real inotify, FastAPI TestClient), minimal e2e. Every adapter and the
+   routing/debounce logic must be covered. CI (`ruff` + `mypy` + `pytest`) must be green before
+   merge.
+7. **Data / migrations.** DB schema changes go through an explicit migration step — never
+   silently break an existing `app.db`.
+8. **Resilience & observability.** Fail fast on startup/config errors; isolate per-server
+   runtime failures (one dead backend never blocks the others); structured logging + metrics
+   for paths that otherwise fail silently.
+9. **Process & docs.** Small, single-purpose PRs aligned to the phases below. Keep `README.md`
+   and this file in sync with reality. Document each backend's API quirks beside its adapter.
 
 ---
 
-## Script Structure
+## Architecture
+
+Single installable Python package; one async process by default (watcher + web on one event
+loop). `--no-web` runs the engine headless.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Configuration                                               │
-│  - Media extensions, Plex server URL, token, log path       │
-│  - Library mapping (directory → Plex library ID)            │
-│  - Directories to monitor and ignore                        │
-├─────────────────────────────────────────────────────────────┤
-│ Functions                                                   │
-│  - urlencode(): URL-encode paths for API calls              │
-│  - is_ignored_path(): Check against ignore list             │
-│  - send_plex_refresh(): Make API call to Plex               │
-│  - get_library_id(): Map path to library section            │
-│  - get_library_root(): Get base directory for library       │
-│  - get_scan_path(): Determine folder to scan                │
-├─────────────────────────────────────────────────────────────┤
-│ Main Loop                                                   │
-│  - inotifywait monitors directories                         │
-│  - Filter by extension and ignore list                      │
-│  - Debounce by scan path                                    │
-│  - Trigger targeted Plex refresh                            │
-└─────────────────────────────────────────────────────────────┘
+mediascanmonitor/
+  cli.py / __main__.py    # entrypoint: `run` (web+engine) | `run --no-web`
+  db/                     # SQLModel models, session, repo, secret crypto (Fernet)
+  config/                 # RuntimeConfig builder (watch set + routing table), defaults
+  watcher/                # async inotify backend (recursive via dynamic watches), watch-limit gate
+  pipeline/               # events, router, filters, per-server debounce, dispatcher (fan-out)
+  servers/                # ServerAdapter ABC + registry + per-type adapters (plex, emby, ...)
+  observ/                 # structlog logging, prometheus metrics, events bus (SSE ring buffer)
+  engine.py               # owns watcher+pipeline; rebuild() on config change (no restart)
+  web/                    # FastAPI app, REST API, SSE, Jinja2+htmx dashboard, password auth
 ```
+
+### Core concepts
+
+- **Domain model:** `Server (1) ──< Folder (N) ──< FileType (N)`. A *server* is a webhook,
+  Plex, Emby, Jellyfin, or Audiobookshelf target. Each folder declares the host path watched,
+  the backend library/section id, and which file extensions to monitor.
+- **Routing:** the watch set is the deduplicated union of all enabled folder paths. On a
+  filesystem event, every `(server, folder)` whose path is a prefix of the changed file **and**
+  whose extensions match becomes a *subscriber*; the event fans out to each.
+- **Per-server debounce:** each server has its own policy applied *after* routing. `off` =
+  deliver every matching event (e.g. a generic webhook wants the full stream); `trailing` =
+  collapse a burst keyed per `(server_id, scan_key)` into one trigger (media-server default).
+- **Live reconfiguration:** UI writes commit to SQLite and call `engine.rebuild()`, which diffs
+  the watch set (add/remove watches) and swaps the routing table — no restart.
+- **Scan targeting asymmetry:** only Plex does native folder-targeted scans (`?path=`); Emby/
+  Jellyfin/Audiobookshelf refresh a whole library. Each adapter declares its supported
+  `scan_mode`s; the UI only offers valid ones.
 
 ---
 
-## Configuration Reference
+## Staged rollout (one PR per phase)
 
-### Main script (`plex_monitor.sh`)
+- **Phase 0 — Scaffolding & rules (this PR):** `CLAUDE.md`, `pyproject.toml`, package skeleton,
+  ruff/mypy/pytest config, `ci.yml`, CLI skeleton.
+- **Phase 1 — Engine core + DB + Plex:** SQLModel schema, repo + crypto, runtime/routing,
+  recursive inotify backend + watch-limit gate, pipeline (router/filters/debounce/dispatcher),
+  `servers/{base,registry,http,plex}`, `engine.rebuild()`, headless `run`.
+- **Phase 2 — All server types:** `servers/{emby,jellyfin,audiobookshelf,webhook}` + `test()`.
+- **Phase 3 — Web UI + API:** FastAPI app, password auth, full CRUD, Test buttons, dashboard,
+  live SSE feed, health/ready, live `rebuild()` on every write.
+- **Phase 4 — Observability & polish:** Prometheus `/metrics`, dashboard widgets, README
+  rewrite, repo/image rename, image smoke test.
+
+---
+
+## Development
 
 ```bash
-# Media file extensions (video + subtitles)
-MEDIA_EXTENSIONS="mkv|mp4|avi|ts|m4v|mov|wmv|flv|webm|srt|smi|ssa|ass|sub|idx|sup|vtt"
+pip install -e ".[dev]"   # install app + dev tooling
 
-# Plex connection
-PLEXSERVER="https://192-168-0-8.xxx.plex.direct:32400"
-
-# Library mapping (path → Plex library section ID)
-LIBRARY_MAP["/volume2/movies/"]="1"
-LIBRARY_MAP["/volume2/tvseries/"]="2"
-
-# Ignored directories (Synology system folders)
-IGNORE_DIRS=("@eaDir" "#snapshot")
-
-# Timing
-WAIT_SEC=30  # Debounce interval
+ruff check .              # lint
+ruff format .             # format
+mypy mediascanmonitor     # type check
+pytest                    # tests
 ```
 
-### Secret config (`plex_monitor.conf`)
-
-```bash
-# Protect with: chmod 600 /volume2/scripts/plex_monitor.conf
-PLEX_TOKEN="your_token_here"
-```
-
-The config file path can be overridden: `CONFIG_FILE=/path/to/config ./plex_monitor.sh`
+CI runs all four on every push/PR (`.github/workflows/ci.yml`). Keep it green.
 
 ---
 
-## Deployment
+## Deployment (target shape; built out across phases)
 
-### Boot Tasks (via DSM Task Scheduler)
-
-| Task | User | Command |
-|------|------|---------|
-| Set inotify limit | root | `sh -c '(sleep 90 && echo 131072 > /proc/sys/fs/inotify/max_user_watches)&'` |
-| Start monitor | regular user | `bash /volume2/scripts/plex_monitor.sh` |
-
-### Log Rotation (via `/etc/logrotate.d/plex_monitor`)
-
-```
-/volume2/scripts/logs/plex_notify.log {
-    weekly
-    rotate 4
-    compress
-    missingok
-    notifempty
-    size 10M
-}
-```
+- **Image:** multi-stage `python:3.12-slim`, runs as non-root, `tzdata` for log timestamps.
+- **Volumes:** `./config:/config` holds `app.db` + the Fernet secret key. Media sources must be
+  bind-mounted from **local** storage (inotify does not work over network mounts).
+- **Config:** everything in the UI behind a single app password. Only optional bootstrap env is
+  the first-run password (`MSM_PASSWORD` / `MSM_PASSWORD_FILE`).
+- **inotify watch limit:** still set at the host level (root boot task on Synology:
+  `echo 131072 > /proc/sys/fs/inotify/max_user_watches`); the app's readiness gate blocks until
+  the limit is sufficient and the dashboard surfaces current-vs-required.
 
 ---
 
-## File Locations
+## Legacy reference (do not extend)
 
-```
-/volume2/scripts/
-├── plex_monitor.sh           # Main monitoring script
-├── plex_monitor.conf         # Secret configuration (chmod 600)
-└── logs/
-    └── plex_notify.log       # Runtime log
+The original Bash implementation is preserved purely as a behavioral reference for the proven
+semantics being re-implemented:
 
-/etc/logrotate.d/
-└── plex_monitor              # Log rotation config
-```
-
----
-
-## Monitored Events
-
-The script watches for these inotify events:
-- `CREATE` – New file created
-- `MOVED_TO` – File moved into monitored directory
-- `DELETE` – File removed
-- `MOVE` – File moved (covers `MOVED_FROM`)
-
----
-
-## Dependencies
-
-- `bash` (v4+ for associative arrays)
-- `inotifywait` (from inotify-tools)
-- `curl` (for Plex API calls)
-- `python3` (for URL encoding)
+- `plex_monitor.sh` — inotify events (`create`/`moved_to`/`delete`/`move`), ignore dirs
+  (`@eaDir`, `#snapshot`), scan-path computation (library root + first folder segment), the
+  debounce strategy, the Plex partial-scan call (`/library/sections/{id}/refresh?path=`), and
+  the inotify-limit wait.
+- `plex_monitor.conf`, `plex_token.txt.example`, the Alpine `Dockerfile`, and `docker-compose.yml`
+  are legacy artifacts; the Python app replaces them (Dockerfile/compose rewritten in later phases).
