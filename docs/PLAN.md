@@ -270,8 +270,17 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   1. **Host-level (sanest default):** a persistent `sysctl.d` drop-in or the existing root boot
      task sets `fs.inotify.max_user_watches=131072` once. Zero privilege in the app container.
   2. **One-shot privileged init sidecar (opt-in convenience):** a tiny separate compose service
-     that runs `sysctl -w fs.inotify.max_user_watches=131072` and **exits** before the main
-     service starts, so the long-lived web app never holds elevated privileges. This is a
+     that runs `sysctl -w fs.inotify.max_user_watches=$MSM_INOTIFY_WATCHES` and **exits** before
+     the main service starts, so the long-lived web app never holds elevated privileges. Its
+     target **must come from a compose env var** (`MSM_INOTIFY_WATCHES`, default 131072): a
+     one-shot sidecar runs before the DB exists and can't read the UI/DB setting, so the env var
+     is its only source. This is the one knob the sidecar option adds. The two values play
+     distinct roles and the design reconciles them: the **env var sets the kernel ceiling**, while
+     the UI **`required_inotify_watches` is the gate threshold** the app compares the live `/proc`
+     value against — so drift is *detected, not silent* (raise the UI target above what the
+     sidecar wrote and the gate blocks + the dashboard says to bump the env var and recreate). The
+     same env var can **bootstrap** `required_inotify_watches` on first run (like `MSM_PASSWORD`)
+     so they start aligned. This is a
      well-established pattern — Elasticsearch/OpenSearch do exactly this for `vm.max_map_count`,
      Bitnami's Helm charts ship a configurable `sysctlImage` init container for the same job, and
      CNI plugins (Cilium/Calico) use privileged init containers for networking sysctls. Document
