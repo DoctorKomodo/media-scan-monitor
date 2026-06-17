@@ -26,7 +26,12 @@ These override default behavior and apply to every change in this repo.
    bumping *any* library, tool, plugin, or Docker base image, check the package registry /
    official docs for the current stable version and pin that exact version. Do **not** trust
    version numbers from training data. Keep the dependency set small; prefer the stdlib or an
-   existing dependency before adding a new one, and justify every addition.
+   existing dependency before adding a new one, and justify every addition. **This rule also
+   governs the Python interpreter version itself** — target the current stable Python (verified
+   against python.org, not defaulted from memory) and keep it in sync everywhere it is declared:
+   `requires-python`, the `ruff`/`mypy` targets, the CI `python-version`, and the Docker base
+   image. The only reason to lag the newest stable is a *documented* blocker (e.g. a required
+   dependency has no wheel for it yet); record that reason here if it ever applies.
 2. **Extensibility — adding a server type is one file.** A new backend = one new module under
    `mediascanmonitor/servers/` implementing the `ServerAdapter` ABC + a registry entry + its
    tests. The watcher and pipeline must **never** special-case a specific backend. Backend
@@ -125,7 +130,7 @@ CI runs all four on every push/PR (`.github/workflows/ci.yml`). Keep it green.
 
 ## Deployment (target shape; built out across phases)
 
-- **Image:** multi-stage `python:3.12-slim`, runs as non-root, `tzdata` for log timestamps.
+- **Image:** multi-stage `python:3.14-slim`, runs as non-root, `tzdata` for log timestamps.
 - **Volumes:** `./config:/config` holds `app.db` + the Fernet secret key. Media sources must be
   bind-mounted from **local** storage (inotify does not work over network mounts).
 - **Config:** everything in the UI behind a single app password. Only optional bootstrap env is

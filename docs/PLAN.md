@@ -239,7 +239,7 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
 
 ## Deployment
 
-- **Dockerfile:** multi-stage `python:3.12-slim` (build venv → slim runtime), `tzdata`, run
+- **Dockerfile:** multi-stage `python:3.14-slim` (build venv → slim runtime), `tzdata`, run
   as non-root. Deps (pinned in `pyproject.toml`): `fastapi`, `uvicorn[standard]`, `httpx`,
   `pydantic>=2`, `sqlmodel`, `asyncinotify`, `jinja2`, `tenacity`, `structlog`,
   `prometheus-client`, `cryptography`, `argon2-cffi` (or `passlib[argon2]`). No bash/curl/

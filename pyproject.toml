@@ -7,7 +7,7 @@ name = "media-scan-monitor"
 version = "0.1.0"
 description = "Watch media folders and fan out targeted scan/refresh events to Plex, Emby, Jellyfin, Audiobookshelf, and generic webhooks."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = { file = "LICENSE" }
 authors = [{ name = "media-scan-monitor contributors" }]
 keywords = ["plex", "emby", "jellyfin", "audiobookshelf", "inotify", "media", "webhook"]
@@ -50,7 +50,7 @@ packages = ["mediascanmonitor"]
 # --------------------------------------------------------------------------- #
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 100
 src = ["mediascanmonitor", "tests"]
 
@@ -70,7 +70,7 @@ select = [
 "tests/**" = ["B"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 warn_unused_configs = true
 warn_redundant_casts = true
