@@ -250,12 +250,30 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
     **omit** `--extra dev` so the dev tools are excluded), and copy the resulting `.venv` into
     the slim runtime stage. The lockfile — not loose `pip install` — is the source of truth, so
     the image, CI, and the dev box all resolve identically.
-- **docker-compose:** `./config:/config` (SQLite db + secret key + state), `ports: ["8080:8080"]`,
-  media bind-mounts (sources MUST be on local `/volume2` for inotify). No `PLEX_*` env —
-  everything is configured in the UI; only optional bootstrap (e.g. `MSM_PASSWORD_FILE` to
-  seed the app password on first run).
-- **inotify watch limit:** unchanged operationally (root boot task sets it); `/ready` blocks
-  until the gate passes; dashboard shows current vs required.
+- **docker-compose:** `./config:/config` **read-write** (SQLite db + secret key + state),
+  `ports: ["8080:8080"]`, and **read-only** media bind-mounts (`/volume2/media:/data/media:ro`).
+  The monitor only ever *reads* the watched tree (inotify is a kernel-side watch + directory
+  reads) and never creates/moves/deletes media, so `:ro` is the default — least privilege means
+  the network-facing app physically cannot corrupt the library. Sources MUST still be on local
+  `/volume2` (inotify does not work over network mounts). No `PLEX_*` env — everything is
+  configured in the UI; only optional bootstrap (e.g. `MSM_PASSWORD_FILE` to seed the app
+  password on first run).
+- **inotify watch limit (`fs.inotify.max_user_watches`):** the main app stays **non-root and
+  read-only** w.r.t. the kernel — it never writes the sysctl; it only *checks* it (the `/ready`
+  gate blocks until the limit is sufficient and the dashboard shows current-vs-required). Two
+  supported ways to actually raise it:
+  1. **Host-level (sanest default):** a persistent `sysctl.d` drop-in or the existing root boot
+     task sets `fs.inotify.max_user_watches=131072` once. Zero privilege in the app container.
+  2. **One-shot privileged init sidecar (opt-in convenience):** a tiny separate compose service
+     that runs `sysctl -w fs.inotify.max_user_watches=131072` and **exits** before the main
+     service starts, so the long-lived web app never holds elevated privileges. This is a
+     well-established pattern — Elasticsearch/OpenSearch do exactly this for `vm.max_map_count`,
+     Bitnami's Helm charts ship a configurable `sysctlImage` init container for the same job, and
+     CNI plugins (Cilium/Calico) use privileged init containers for networking sysctls. Document
+     it loudly as **privileged** and note it writes a **host-global** value (on the Synology
+     target kernel this tunable is global, not per-container), so it changes the limit for the
+     whole host. Offered as an escape hatch for users who'd rather not touch the host; the
+     host-level option remains the documented default.
 - **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
   3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
@@ -317,8 +335,11 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
    create (scan new dir contents to avoid the attach race). Biggest new code area.
 2. **Live rebuild correctness** — adding/removing watches and swapping routing on UI edits
    without dropping or double-firing events; pin with rebuild tests.
-3. **Watch limits on the NAS** — per-dir watches consume `max_user_watches`; keep the gate,
-   surface live count, document the boot task.
+3. **Watch limits on the NAS** — per-dir watches consume `fs.inotify.max_user_watches`; keep
+   the read-only gate (app never writes the sysctl), surface live count, and document both ways
+   to raise it: host-level `sysctl.d`/boot task (default) or an opt-in one-shot privileged init
+   sidecar (precedent: Elasticsearch `vm.max_map_count`, Bitnami `sysctlImage`). The sidecar is
+   privileged and writes a host-global value — call that out wherever it's offered.
 4. **inotify over bind mounts** — sources MUST be local `/volume2`; document loudly, warn on
    "no events ever seen".
 5. **Debounce semantics** — per-server policy: `off` (deliver every event, e.g. webhooks) vs
