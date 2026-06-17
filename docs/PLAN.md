@@ -213,8 +213,11 @@ Key choices & justifications:
 
 Server-rendered Jinja2 + htmx; SSE for the live feed.
 
-- **Pages:** `/` dashboard (engine status, live watch-count vs limit, per-server health
-  cards, recent events); `/servers` list + add/edit (type-specific forms incl. a per-server
+- **Pages:** `/` dashboard (engine status, live watch-count: current kernel limit vs needed vs
+  configured target, with a recommended `sysctl` line when near the limit; per-server health
+  cards, recent events); a `/settings` page exposing **`required_inotify_watches`** (default
+  131072, `0` to skip the gate) and other singletons; `/servers` list + add/edit (type-specific
+  forms incl. a per-server
   **debounce control** — off vs trailing + window seconds; per-server folder sub-forms with
   extension pickers); `/servers/{id}` detail + **Test**; `/events` (live SSE +
   searchable recent events).
@@ -274,6 +277,20 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
      target kernel this tunable is global, not per-container), so it changes the limit for the
      whole host. Offered as an escape hatch for users who'd rather not touch the host; the
      host-level option remains the documented default.
+
+  **The required value is tunable, not hard-coded.** `131072` (`2^17`) is the proven default
+  carried over from the Bash script (`REQUIRED_INOTIFY_WATCHES`), **not** a kernel ceiling —
+  `max_user_watches` is bounded only by memory (~1 KB of unswappable kernel memory per watch, so
+  131072 ≈ ~135 MB worst-case), and large libraries commonly run 524288 or 1048576. So:
+  - Expose **`required_inotify_watches`** as a persisted setting (in the `setting` table, editable
+    in the UI; bootstrappable via env for first run), default `131072`, with `0` to skip the gate
+    entirely — same semantics as the Bash env var.
+  - Because the app manages watches **per directory**, it already *knows* the live watch count and
+    the count it needs (≈ number of watched dirs). The readiness gate checks the kernel's current
+    `max_user_watches` against `max(required_inotify_watches, needed + headroom)`, and the
+    dashboard surfaces **current vs needed vs configured target** so the value can be tuned from
+    real data rather than guessed — and the app can *recommend* a higher target (and the exact
+    `sysctl`/boot-task line to apply) when a big library approaches the limit.
 - **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
   3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
@@ -339,7 +356,10 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
    the read-only gate (app never writes the sysctl), surface live count, and document both ways
    to raise it: host-level `sysctl.d`/boot task (default) or an opt-in one-shot privileged init
    sidecar (precedent: Elasticsearch `vm.max_map_count`, Bitnami `sysctlImage`). The sidecar is
-   privileged and writes a host-global value — call that out wherever it's offered.
+   privileged and writes a host-global value — call that out wherever it's offered. The required
+   target is a tunable setting (`required_inotify_watches`, default 131072 — not a kernel ceiling,
+   only memory-bound), and the gate compares the kernel value against `max(target, needed)` using
+   the app's own per-directory watch count so the value is data-driven, not guessed.
 4. **inotify over bind mounts** — sources MUST be local `/volume2`; document loudly, warn on
    "no events ever seen".
 5. **Debounce semantics** — per-server policy: `off` (deliver every event, e.g. webhooks) vs
