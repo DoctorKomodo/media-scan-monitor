@@ -213,10 +213,10 @@ Key choices & justifications:
 
 Server-rendered Jinja2 + htmx; SSE for the live feed.
 
-- **Pages:** `/` dashboard (engine status, live watch-count: current kernel limit vs needed vs
-  configured target, with a recommended `sysctl` line when near the limit; per-server health
-  cards, recent events); a `/settings` page exposing **`required_inotify_watches`** (default
-  131072, `0` to skip the gate) and other singletons; `/servers` list + add/edit (type-specific
+- **Pages:** `/` dashboard (engine status, live watch-count: **current kernel limit vs needed**
+  — both measured — with a recommended `sysctl` line when near the limit; per-server health
+  cards, recent events); a `/settings` page exposing the **`inotify_gate`** override
+  (`enforce`/`off`) and other singletons; `/servers` list + add/edit (type-specific
   forms incl. a per-server
   **debounce control** — off vs trailing + window seconds; per-server folder sub-forms with
   extension pickers); `/servers/{id}` detail + **Test**; `/events` (live SSE +
@@ -272,47 +272,43 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   2. **One-shot privileged init sidecar (opt-in convenience):** a tiny separate compose service
      that runs `sysctl -w fs.inotify.max_user_watches=$MSM_INOTIFY_WATCHES` and **exits** before
      the main service starts, so the long-lived web app never holds elevated privileges. Its
-     target **must come from a compose env var** (`MSM_INOTIFY_WATCHES`, default 131072): a
-     one-shot sidecar runs before the DB exists and can't read the UI/DB setting, so the env var
-     is its only source. This is the one knob the sidecar option adds. The two values play
-     distinct roles and the design reconciles them: the **env var sets the kernel ceiling**, while
-     the UI **`required_inotify_watches` is the gate threshold** the app compares the live `/proc`
-     value against — so drift is *detected, not silent* (raise the UI target above what the
-     sidecar wrote and the gate blocks + the dashboard says to bump the env var and recreate). The
-     same env var can **bootstrap** `required_inotify_watches` on first run (like `MSM_PASSWORD`)
-     so they start aligned. This is a
-     well-established pattern — Elasticsearch/OpenSearch do exactly this for `vm.max_map_count`,
-     Bitnami's Helm charts ship a configurable `sysctlImage` init container for the same job, and
-     CNI plugins (Cilium/Calico) use privileged init containers for networking sysctls. Document
-     it loudly as **privileged** and note it writes a **host-global** value (on the Synology
-     target kernel this tunable is global, not per-container), so it changes the limit for the
-     whole host. Offered as an escape hatch for users who'd rather not touch the host; the
-     host-level option remains the documented default.
+     target **comes from a compose env var** (`MSM_INOTIFY_WATCHES`, default 131072): a one-shot
+     sidecar runs before the DB exists and isn't the app, so an env var is its only source. This
+     is the one knob the sidecar adds, and it sets the **kernel ceiling** — *not* an app setting
+     (see "the app measures, it doesn't store a target" below). This is a well-established
+     pattern — Elasticsearch/OpenSearch do exactly this for `vm.max_map_count`, Bitnami's Helm
+     charts ship a configurable `sysctlImage` init container for the same job, and CNI plugins
+     (Cilium/Calico) use privileged init containers for networking sysctls. Document it loudly as
+     **privileged** and note it writes a **host-global** value (on the Synology target kernel this
+     tunable is global, not per-container), so it changes the limit for the whole host. Offered as
+     an escape hatch for users who'd rather not touch the host; the host-level option remains the
+     documented default.
 
-  **The required value is tunable, not hard-coded.** `131072` (`2^17`) is the proven default
-  carried over from the Bash script (`REQUIRED_INOTIFY_WATCHES`), **not** a kernel ceiling —
-  `max_user_watches` is bounded only by memory (~1 KB of unswappable kernel memory per watch, so
-  131072 ≈ ~135 MB worst-case), and large libraries commonly run 524288 or 1048576. So:
-  - Expose **`required_inotify_watches`** as a persisted setting (in the `setting` table, editable
-    in the UI; bootstrappable via env for first run), default `131072`, with `0` to skip the gate
-    entirely — same semantics as the Bash env var.
-  - Because the app manages watches **per directory**, it already *knows* the live watch count and
-    the count it needs (≈ number of watched dirs). The readiness gate checks the kernel's current
-    `max_user_watches` against `max(required_inotify_watches, needed + headroom)`, and the
-    dashboard surfaces **current vs needed vs configured target** so the value can be tuned from
-    real data rather than guessed — and the app can *recommend* a higher target (and the exact
-    `sysctl`/boot-task line to apply) when a big library approaches the limit.
+  **The app measures what's needed; it does not store a "required" target.** The Bash script's
+  `REQUIRED_INOTIFY_WATCHES` was a hand-typed number only because the script never knew its own
+  watch count. The new app manages watches **per directory**, so the relevant values are
+  *measurements*, not settings:
+  - **`needed`** — derived from config (≈ count of watched dirs + headroom). The app computes it.
+  - **`current`** — read live from `/proc/sys/fs/inotify/max_user_watches`.
+  - The gate is simply **`current >= needed`** — no user-supplied threshold in the loop. The
+    dashboard shows **current vs needed** and *recommends* a kernel ceiling (`needed + headroom`)
+    with the exact `sysctl`/boot-task/`MSM_INOTIFY_WATCHES` line. `131072` (`2^17`) is just the
+    default ceiling, **not** a kernel limit — `max_user_watches` is memory-bound (~1 KB per watch,
+    so 131072 ≈ ~135 MB worst-case); large libraries commonly run 524288 or 1048576.
+  - The **only in-app knob** is a small persisted **gate-override policy** (`inotify_gate`:
+    `enforce` (default) | `off`) — the real replacement for the Bash `=0` escape hatch, for users
+    who want the engine to run regardless. It's a policy toggle, not a number.
 
   **No-deadlock rule (the gate must not block the UI).** A non-root container can't raise the
   sysctl itself, so if the gate blocked *process startup* (as the Bash script does) and the limit
   also lives in the UI, you could never reach the UI to fix it — a chicken-and-egg lock-out. The
   web layer therefore **always starts**; the inotify gate gates only the **engine/watcher** task
-  and is **non-fatal and retryable**, not a process exit. When `current < required` the engine
+  and is **non-fatal and retryable**, not a process exit. When `current < needed` the engine
   reports a `blocked` state and the dashboard shows the shortfall plus the exact remediation line;
-  applying the host fix *or* lowering/zeroing `required_inotify_watches` in the UI triggers
+  applying the host fix *or* flipping the `inotify_gate` override to `off` triggers
   `engine.rebuild()` and the watcher attaches — no restart. An empty config needs 0 watches, so a
   fresh install is never wedged. Only headless `--no-web` keeps the Bash-style block/exit
-  behavior (no UI to recover through), overridable by the env bootstrap.
+  behavior (no UI to recover through), overridable by the gate-override env.
 - **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
   3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
@@ -378,10 +374,11 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
    the read-only gate (app never writes the sysctl), surface live count, and document both ways
    to raise it: host-level `sysctl.d`/boot task (default) or an opt-in one-shot privileged init
    sidecar (precedent: Elasticsearch `vm.max_map_count`, Bitnami `sysctlImage`). The sidecar is
-   privileged and writes a host-global value — call that out wherever it's offered. The required
-   target is a tunable setting (`required_inotify_watches`, default 131072 — not a kernel ceiling,
-   only memory-bound), and the gate compares the kernel value against `max(target, needed)` using
-   the app's own per-directory watch count so the value is data-driven, not guessed.
+   privileged and writes a host-global value — call that out wherever it's offered. The app does
+   **not** store a "required" number: it derives `needed` from its own per-directory watch count
+   and gates on `current >= needed` (current read from `/proc`), recommending a kernel ceiling
+   (`needed + headroom`; the sidecar/host knob `MSM_INOTIFY_WATCHES` defaults to 131072 — not a
+   kernel ceiling, only memory-bound). The lone in-app knob is the `inotify_gate` override.
 4. **inotify over bind mounts** — sources MUST be local `/volume2`; document loudly, warn on
    "no events ever seen".
 5. **Debounce semantics** — per-server policy: `off` (deliver every event, e.g. webhooks) vs
