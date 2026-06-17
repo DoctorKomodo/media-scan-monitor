@@ -226,7 +226,9 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   - `GET/POST/PATCH/DELETE /servers/{id}/folders[/{fid}]` (path, library_id, extensions, enabled).
   - `POST /servers/{id}/test` → runs `ServerAdapter.test()` (auth + reachability).
   - `GET /events/recent?limit=` and `GET /events/stream` (SSE) from `events_bus`.
-  - `GET /health` (liveness) + `GET /ready` (DB reachable, watcher attached, inotify gate passed).
+  - `GET /health` (liveness — always up so the UI is reachable even when the engine is blocked)
+    + `GET /ready` (DB reachable, watcher attached, inotify gate passed). The inotify gate gates
+    only the **engine**, never the web layer (see "no-deadlock" note under Deployment).
   - `GET /metrics` (Prometheus).
   - `POST /auth/login` / `POST /auth/logout`; first-run setup to set the password if unset.
   - All writes trigger `engine.rebuild()`.
@@ -291,6 +293,17 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
     dashboard surfaces **current vs needed vs configured target** so the value can be tuned from
     real data rather than guessed — and the app can *recommend* a higher target (and the exact
     `sysctl`/boot-task line to apply) when a big library approaches the limit.
+
+  **No-deadlock rule (the gate must not block the UI).** A non-root container can't raise the
+  sysctl itself, so if the gate blocked *process startup* (as the Bash script does) and the limit
+  also lives in the UI, you could never reach the UI to fix it — a chicken-and-egg lock-out. The
+  web layer therefore **always starts**; the inotify gate gates only the **engine/watcher** task
+  and is **non-fatal and retryable**, not a process exit. When `current < required` the engine
+  reports a `blocked` state and the dashboard shows the shortfall plus the exact remediation line;
+  applying the host fix *or* lowering/zeroing `required_inotify_watches` in the UI triggers
+  `engine.rebuild()` and the watcher attaches — no restart. An empty config needs 0 watches, so a
+  fresh install is never wedged. Only headless `--no-web` keeps the Bash-style block/exit
+  behavior (no UI to recover through), overridable by the env bootstrap.
 - **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
   3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
