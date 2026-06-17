@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "media-scan-monitor"
+version = "0.1.0"
+description = "Watch media folders and fan out targeted scan/refresh events to Plex, Emby, Jellyfin, Audiobookshelf, and generic webhooks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "media-scan-monitor contributors" }]
+keywords = ["plex", "emby", "jellyfin", "audiobookshelf", "inotify", "media", "webhook"]
+
+# NOTE (project rule): every version below is the current stable release verified
+# against PyPI at add-time (never pinned from memory). Bump deliberately, re-verifying.
+dependencies = [
+    "fastapi==0.137.1",
+    "uvicorn[standard]==0.49.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.4",
+    "sqlmodel==0.0.38",
+    "asyncinotify==4.4.4",
+    "jinja2==3.1.6",
+    "tenacity==9.1.4",
+    "structlog==26.1.0",
+    "prometheus-client==0.25.0",
+    "cryptography==49.0.0",
+    "argon2-cffi==25.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.15.17",
+    "mypy==2.1.0",
+    "pytest==9.1.0",
+    "pytest-asyncio==1.4.0",
+    "respx==0.23.1",
+]
+
+[project.scripts]
+media-scan-monitor = "mediascanmonitor.cli:main"
+msm = "mediascanmonitor.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mediascanmonitor"]
+
+# --------------------------------------------------------------------------- #
+# Tooling
+# --------------------------------------------------------------------------- #
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["mediascanmonitor", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+# Per-library import overrides (e.g. asyncinotify) are added in Phase 1 when those
+# modules are first imported, to keep `warn_unused_configs` quiet until then.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra"
