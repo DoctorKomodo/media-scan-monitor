@@ -92,6 +92,9 @@ mediascanmonitor/
 
 ## Staged rollout (one PR per phase)
 
+> Full design rationale, domain model, server-type API reference, and verification strategy
+> live in [`docs/PLAN.md`](docs/PLAN.md).
+
 - **Phase 0 — Scaffolding & rules (this PR):** `CLAUDE.md`, `pyproject.toml`, package skeleton,
   ruff/mypy/pytest config, `ci.yml`, CLI skeleton.
 - **Phase 1 — Engine core + DB + Plex:** SQLModel schema, repo + crypto, runtime/routing,
