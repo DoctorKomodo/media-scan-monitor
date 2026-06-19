@@ -30,9 +30,22 @@ on everything.
 - Full type hints; `mypy --strict` clean. `ruff` lint+format (line length 100).
 - Pure dataclasses for in-memory domain types use `@dataclass(frozen=True, slots=True)`.
 - SQLite path: `/config/app.db`. Secret key path: `/config/secret.key`. Both overridable by
-  env (`MSM_DB_PATH`, `MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE`) — see sub-plan 01.
+  env (`MSM_DB_PATH`, `MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE`) — see sub-plan 01. These are the
+  *only* env vars the app reads in Phase 1. `MSM_INOTIFY_WATCHES` (sidecar/host-only) and
+  `MSM_PASSWORD_FILE` (Phase 3 bootstrap) are **not** read by the app here.
 - No blocking I/O on the event loop. DB calls in Phase 1 are sync SQLModel/SQLAlchemy run inside
   `asyncio.to_thread` at the engine boundary (sub-plan 06); repo methods themselves are sync.
+- **Repo threading model.** Because repo methods run inside `asyncio.to_thread` (a multi-thread
+  pool) and SQLite `Session`s are not thread-safe: every `Repo` method opens and closes its own
+  `Session` from the injected factory, no `Session` is shared across calls or stored on the repo,
+  no `Session` outlives the method that created it, and the SQLite engine is created with
+  `connect_args={"check_same_thread": False}` (sub-plan 01).
+- **Pure normalizers are a leaf module** (`mediascanmonitor/normalize.py`, owned by sub-plan 01)
+  with no intra-package imports, so both `db` and `config` depend *down* onto it (see §1.1). They
+  do **not** live in `config/defaults.py`.
+- **Plaintext secrets are never reprable.** Any dataclass field or model attribute that holds a
+  *decrypted* secret is excluded from `__repr__`/`__str__` (`field(repr=False)` on dataclasses;
+  see invariant 3). Ciphertext columns are exempt but discouraged from logging.
 
 ---
 
@@ -56,6 +69,30 @@ class DebounceMode(str, Enum):
     off = "off"             # dispatch every matching event
     trailing = "trailing"   # collapse a burst per (server_id, scan_key) after a window
 ```
+
+---
+
+## 1.1 Pure normalizers (`mediascanmonitor/normalize.py`) — owned by sub-plan 01
+
+Leaf module: **imports nothing from this package**. Both the persistence layer (`db`) and the
+config layer (`config`) depend down onto it, so there is no `db ↔ config` cycle.
+
+```python
+def normalize_extension(ext: str) -> str:    # strip leading dot(s), lowercase, strip whitespace
+def normalize_path(path: str) -> str:        # PURE LEXICAL only (see below)
+```
+
+`normalize_path` is **pure and total**: it collapses redundant separators and lexically resolves
+`.`/`..`, then strips the trailing slash (except root). It is `os.path.normpath` semantics — it
+does **not** read the CWD, does **not** touch the filesystem, and does **not** resolve symlinks
+(intentional non-goals; symlink canonicalization, if ever needed, belongs in the watcher). In
+particular it does **not** make a relative path absolute — that would require the CWD and make the
+function non-deterministic. "Paths must be absolute" is therefore a **validation rule enforced at
+the schema boundary** (§4), not a transformation done by the normalizer.
+
+These were previously slated for `config/defaults.py`; they live here so `Repo` (01) can call
+`normalize_extension`/`normalize_path` without importing `config`. `config/defaults.py` and the
+Pydantic schemas re-use these same functions — there is exactly one implementation of each.
 
 ---
 
@@ -89,7 +126,7 @@ class Server(SQLModel, table=True):
 
 class Folder(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    server_id: int = Field(foreign_key="server.id", index=True)
+    server_id: int = Field(foreign_key="server.id", ondelete="CASCADE", index=True)
     path: str                                  # host path watched, e.g. /data/media/tvseries
     library_id: str | None = None              # backend section/library id; None for webhook
     enabled: bool = True
@@ -101,17 +138,36 @@ class Folder(SQLModel, table=True):
 
 class FileType(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    folder_id: int = Field(foreign_key="folder.id", index=True)
+    folder_id: int = Field(foreign_key="folder.id", ondelete="CASCADE", index=True)
     extension: str                             # normalized: lowercase, no leading dot
     folder: Folder = Relationship(back_populates="filetypes")
 
 class Setting(SQLModel, table=True):
-    key: str = Field(primary_key=True)         # e.g. "schema_version", "password_hash"
+    key: str = Field(primary_key=True)         # e.g. "password_hash", "inotify_gate"
     value: str
 ```
 
-**Schema version:** the `Setting` row `key="schema_version"` holds the integer schema version as
-a string (starts at `"1"`). Migration step lives in sub-plan 01.
+**Foreign keys are enforced.** SQLite ignores `FOREIGN KEY` constraints unless
+`PRAGMA foreign_keys=ON` is set **per connection**. Sub-plan 01's engine factory registers a
+`connect` listener that runs it, so (a) inserting a `Folder`/`FileType` with a dangling parent id
+raises `IntegrityError` instead of silently orphaning, and (b) `ondelete="CASCADE"` gives a
+DB-level cascade as defense-in-depth alongside the ORM `cascade="all, delete-orphan"` (the ORM
+deletes children first, so the two never conflict).
+
+**Schema migrations: Alembic.** Schema evolution goes through **Alembic** (rule 7 — never
+silently break `app.db`), not `create_all`. `init_db` runs `alembic upgrade head` at startup;
+Alembic's own `alembic_version` table is the source of truth for the applied revision. The
+initial revision (`0001`) creates the four tables above. SQLite's limited `ALTER TABLE` is
+handled with Alembic **batch mode** (`render_as_batch=True`). The `Setting` table stays (it holds
+`password_hash`, `inotify_gate`, …) but there is **no** `schema_version` row — Alembic owns
+versioning. Scaffolding + the initial revision live in sub-plan 01.
+
+**inotify gate policy:** the `Setting` row `key="inotify_gate"` holds `"enforce"` (default) or
+`"off"` — the only in-app inotify knob (PLAN.md → Deployment, "the app measures, it doesn't
+store a target"). It is a *policy*, never a watch-count number. The engine consults it (§10); the
+Phase 3 UI toggles it. There is **no seeding step** — an absent row reads as `None` and the
+engine treats that as `"enforce"` (`get_setting("inotify_gate") or "enforce"`), so a fresh
+install enforces by default. Phase 1 reads it but ships no UI.
 
 ---
 
@@ -127,7 +183,9 @@ class SecretDecryptError(Exception): ...
 
 def load_or_create_key(path: Path, env_key: str | None = None) -> bytes:
     """Return a urlsafe-base64 Fernet key. Precedence: env_key > file at path >
-    generate+write (chmod 0600). Used by sub-plan 06 at startup."""
+    generate+atomically-create the file with mode 0600 (no write-then-chmod window).
+    env_key and file contents are stripped of surrounding whitespace. Used by sub-plan 06
+    at startup."""
 ```
 
 ---
@@ -167,6 +225,48 @@ class Repo:
 (`db/schemas.py`). `ServerCreate.secret` / `ServerUpdate.secret` are plaintext-in, encrypted by
 the repo. The API-facing redaction read-models are Phase 3 — **not** in scope here, but the repo
 must never return plaintext except via `resolve_secret`.
+
+**Normalization chokepoint:** path/extension normalization and validation are performed by
+**field validators on the Pydantic schemas**, not ad-hoc in each repo method:
+- `FolderCreate.path` → `normalize_path(...)`, then **assert the result is absolute**
+  (`os.path.isabs`); a relative path raises a `ValidationError` (fail-fast — the Phase 3 web
+  layer surfaces it as a 422). This is where the "paths are absolute" rule lives (§1.1).
+- `FolderCreate.extensions` → `normalize_extension` each element, drop empties, **dedupe**
+  (preserving order) so the DB never gets duplicate `FileType` rows.
+
+Because the validated `FolderCreate` is already normalized, `Repo.create_folder` **trusts it**
+and stores the values as-is — it does not re-normalize. The typed boundary is therefore
+truthful: holding a `FolderCreate` means holding normalized, absolute, deduped data. The single
+exception is `set_filetypes`, which takes a raw `list[str]` (no schema): it normalizes + dedupes
+inline with the same leaf-module `normalize_extension`. Any value entering the DB thus passes
+through exactly one normalizer call site, so invariant 4 holds by construction.
+
+**Error model:** mutations targeting a missing id raise `KeyError` (`update_server`,
+`set_filetypes`); `delete_server`/`delete_folder` are **idempotent** (no-op on a missing id, no
+raise); `create_server` surfaces the underlying `IntegrityError` on a duplicate `name`, and
+`create_folder` surfaces `IntegrityError` on a dangling `server_id` (FK enforcement, §2).
+Callers (sub-plans 02/03/06, Phase 3 web) catch accordingly.
+
+**Loading model (detached-instance safety):** repo methods return ORM instances after their
+session closes (sessions use `expire_on_commit=False`, so already-loaded **column** attributes
+stay readable). Relationships are a different matter: `list_servers` returns `Server` rows
+**without** `folders` loaded — accessing `server.folders` on the result raises
+`DetachedInstanceError`. Consumers walk children via `list_folders(server_id)` instead, which
+**force-loads** each `Folder.filetypes` while its session is open. `build_runtime_config` (02) is
+built on exactly this: servers first, then `list_folders` per server, never touching
+`Server.folders`.
+
+**Assembly (`mediascanmonitor/db/session.py`, sub-plan 01).** Two distinct helpers — do not
+conflate their return types:
+
+```python
+def init_db(db_path: str | os.PathLike[str]) -> Engine:   # runs `alembic upgrade head`; returns the ENGINE
+def session_factory(engine: Engine) -> Callable[[], Session]: ...   # zero-arg Session producer
+```
+
+A `Repo` is therefore built as `Repo(session_factory(init_db(db_path)), box)` (sub-plan 06's
+`_build_repo`). `init_db` migrates the DB to `head` (Alembic, §2) and returns the Engine — it does
+**not** return a factory and does **not** call `create_all`.
 
 ---
 
@@ -215,7 +315,7 @@ class ServerRuntime:
     base_url: str
     verify_tls: bool
     timeout_seconds: float
-    secret: str | None         # decrypted
+    secret: str | None = field(repr=False)   # decrypted plaintext; excluded from repr (invariant 3)
     scan_mode: ScanMode
     debounce_mode: DebounceMode
     debounce_window_seconds: int
@@ -252,9 +352,10 @@ IGNORE_DIRS: frozenset[str]                  # {"@eaDir", "#snapshot", "#recycle
 EXTENSION_PRESETS: dict[str, tuple[str, ...]]  # "video", "subtitles", "audio"
 DEFAULT_DEBOUNCE_WINDOW_SECONDS: int = 30
 DEFAULT_DEBOUNCE_BY_TYPE: dict[ServerType, DebounceMode]  # plex/emby/jf/abs=trailing, webhook=off
-def normalize_extension(ext: str) -> str:    # strip leading dot, lowercase, strip whitespace
-def normalize_path(path: str) -> str:        # absolute, no trailing slash (except root)
 ```
+
+`normalize_extension` / `normalize_path` are **not** here — they live in the leaf module
+`mediascanmonitor/normalize.py` (§1.1). `config/defaults.py` imports them if it needs them.
 
 ---
 
@@ -330,9 +431,11 @@ class InotifyBackend:                                        # implements Watche
 # watcher/watch_limit.py
 @dataclass(frozen=True, slots=True)
 class WatchLimitStatus:
-    current_limit: int
-    required: int          # number of directories that will be watched
-    ok: bool
+    current: int           # live value read from /proc (the kernel ceiling)
+    dirs: int              # raw count of directories that will be watched (one watch each)
+    needed: int            # gate threshold = ceil(dirs * headroom)
+    recommended: int       # kernel ceiling to advise the user = ceil(needed * headroom)
+    ok: bool               # current >= needed
 
 def read_max_user_watches(proc_path: str = "/proc/sys/fs/inotify/max_user_watches") -> int: ...
 def count_dirs(roots: Iterable[str], ignore_dirs: frozenset[str]) -> int: ...
@@ -340,8 +443,29 @@ def check_watch_limit(roots: Iterable[str], ignore_dirs: frozenset[str],
                       headroom: float = 1.2) -> WatchLimitStatus: ...
 ```
 
+**The app measures `needed`; it never stores a "required" target.** All three numbers are
+*measurements* — `dirs`/`needed` derived from the current config, `current` read live from
+`/proc` — not user-supplied settings. The gate is purely `current >= needed`; there is no
+threshold knob in the loop. `MSM_INOTIFY_WATCHES` (PLAN.md → Deployment) is a **sidecar/host**
+env var that sets the kernel *ceiling* before the app starts — it is **never read by the app**.
+The only in-app knob is the `inotify_gate` policy `Setting` (§2): `enforce` (default) lets the
+gate block the engine; `off` makes the engine attach regardless (the Bash `=0` escape hatch).
+
 The watcher consumes `FsEvent`/`FsEventType` from sub-plan 02 and `normalize_path` from
-`config/defaults.py`. It does **no** extension filtering — that is the pipeline's job.
+`mediascanmonitor/normalize.py` (§1.1). It does **no** extension filtering — that is the
+pipeline's job.
+
+**Resilience (never fail silently — rule 8):**
+- **Queue overflow.** The kernel drops events with `IN_Q_OVERFLOW` when the inotify queue is
+  exceeded (e.g. a NAS bulk import). The backend must detect it, log a warning, and **resync**:
+  re-attach watches across all roots (a subdir whose `CREATE` was dropped is otherwise unwatched)
+  and re-emit their contents as synthetic `created` events. This is a *bounded* recovery — the
+  per-`scan_key` debouncer collapses the burst — and it guarantees a dropped event never means a
+  permanently missed scan. Overflow is handled *before* the normal `event.path is None` skip.
+- **Runtime `add_watch` failure.** Adding a watch can fail at runtime (kernel limit hit / `ENOSPC`)
+  even though the startup gate passed, because watches grow as directories appear. Such failures
+  are caught, logged, and skipped (that directory is simply unwatched) — never propagated out of
+  `events()`/`set_roots`. The dashboard's `check_watch_limit` surfaces the shortfall.
 
 ---
 
@@ -374,6 +498,12 @@ class Debouncer:
     async def submit(self, req: ScanRequest) -> None:
         # server.debounce_mode == off  -> await dispatch(req) immediately
         # == trailing -> coalesce per (server_id, scan_key); (re)arm timer for window seconds
+    def update_servers(self, servers: dict[int, ServerRuntime]) -> None:
+        # rebuild swap-in-place (see §10): replace the server map WITHOUT discarding the
+        # instance or its pending timers. A pending (server_id, scan_key) whose server is gone
+        # from `servers` is cancelled (no dispatch — the server is disabled/deleted). A pending
+        # timer whose server survives keeps running; its window length is read from the new map
+        # when it next (re)arms, not retroactively.
     async def aclose(self) -> None: ...    # cancel/flush pending timers
 
 # pipeline/dispatcher.py
@@ -394,17 +524,46 @@ class Dispatcher:
 def configure_logging(*, json_logs: bool = True, level: str = "INFO") -> None: ...  # structlog
 
 # engine.py
+class EngineState(str, Enum):
+    starting = "starting"
+    running = "running"
+    blocked = "blocked"        # inotify gate not satisfied; watcher not attached, web stays up
+    stopped = "stopped"
+
 class Engine:
     def __init__(self, repo: Repo, *, watcher: WatcherBackend | None = None) -> None: ...
+    state: EngineState
+    watch_limit: WatchLimitStatus | None   # last gate measurement, surfaced to /ready + dashboard
     async def start(self) -> None:
-        # build_runtime_config -> build adapters+clients -> set watcher roots ->
-        # consume watcher.events(): for each event, route() -> debouncer.submit() per request
+        # build_runtime_config -> _attach():
+        #   gate = check_watch_limit(cfg.watch_paths, cfg.ignore_dirs)
+        #   if inotify_gate == "enforce" and not gate.ok and cfg.watch_paths:
+        #       state = blocked; DO NOT attach the watcher; return (retryable — NOT a process exit)
+        #   else: build adapters+clients -> set watcher roots -> state = running ->
+        #         consume watcher.events(): each event route() -> debouncer.submit() per request
+        # No-deadlock rule (PLAN.md): the gate gates only this engine task; it never exits the
+        # process or blocks the (Phase 3) web layer. An empty config needs 0 watches => never
+        # blocked. Phase 1 headless `--no-web` is the one exception: when blocked with no UI to
+        # recover through, it logs the remediation line and exits non-zero (Bash-style), unless
+        # inotify_gate == "off".
     async def rebuild(self) -> None:
-        # rebuild RuntimeConfig from DB; diff watch_paths (set_roots); rebuild adapters;
-        # dispatcher.set_adapters(); swap routing snapshot. No restart, no dropped events.
+        # 1. cfg = await to_thread(build_runtime_config, repo)   # may block; do it off-loop first
+        # 2. build new adapters+clients from cfg.servers; close clients dropped since last cfg
+        # 3. SWAP (synchronous, no await between these — the consume loop cannot interleave):
+        #       self._config = cfg                       # routing snapshot
+        #       dispatcher.set_adapters(new_adapters)    # keyed by server_id
+        #       debouncer.update_servers(cfg.servers)    # keyed by server_id, in place
+        # 4. re-evaluate the inotify gate against cfg (it changed the watch set, and a config
+        #    edit is exactly when the host fix / inotify_gate flip lands). Transition
+        #    blocked<->running and only set_roots when attaching; recovery needs no restart.
+        # 5. self.watcher.set_roots(cfg.watch_paths)     # diff add/remove watches (when running)
+        # No restart, no dropped events. The three server-keyed structures
+        # (config.servers, dispatcher adapters, debouncer servers) are all derived from the SAME
+        # cfg.servers and swapped in one uninterrupted step, so they can never be observed
+        # inconsistent by an in-flight event (invariant 7).
     async def aclose(self) -> None: ...
 
-# cli.py: `run [--no-web]` wires load_or_create_key -> init_db (create_all + migrate) ->
+# cli.py: `run [--no-web]` wires load_or_create_key -> init_db (alembic upgrade head) ->
 # Repo -> Engine.start(); --no-web is the only mode implemented in Phase 1.
 ```
 
@@ -419,11 +578,23 @@ The watcher is injectable into `Engine` so non-Linux dev/tests can pass a fake b
 2. **`scan_key`** = `scan_path` for `targeted`, `f"lib:{library_id}"` for `library`. Set in
    `route()`, consumed by `Debouncer`.
 3. **Secrets** are plaintext only inside `ServerRuntime.secret` (in memory) and adapter headers.
-   Never in the DB plaintext, never in a logged URL, never in `__repr__` of a model.
-4. **Paths** are normalized via `normalize_path` (absolute, no trailing slash) at every boundary
-   that stores or compares them (repo create, runtime build, watcher roots, router prefix test).
+   Never in the DB plaintext, never in a logged URL, never in a `__repr__`. Enforced concretely:
+   `ServerRuntime.secret` uses `field(repr=False)` (§6), and no log statement formats a whole
+   `ServerRuntime`/adapter that would expand the token.
+4. **Paths** are normalized to a canonical lexical form (no redundant separators, `.`/`..`
+   resolved, no trailing slash except root) via `normalize_path` from the leaf module
+   `mediascanmonitor/normalize.py` (§1.1). The normalizer does **not** make paths absolute;
+   absoluteness is asserted at the schema boundary (§4). Normalization happens at a **single
+   chokepoint per boundary**: the Pydantic schema validators on the way *into* the DB (§4), and
+   `build_runtime_config` / watcher `set_roots` on the way *out*. The router's prefix test then
+   compares already-normalized paths; it does not re-normalize.
 5. **Prefix match** in `route()` is a path-segment prefix (`/a/b` matches `/a/b/c` but not
    `/a/bc`) — implement with `os.path.commonpath` or a separator-aware check, not raw
    `str.startswith`.
 6. **Failure isolation:** a single adapter/server error becomes a `TriggerResult(ok=False)` and
    is logged; it never propagates out of `Dispatcher.dispatch` or aborts the event loop.
+7. **Single source of server state across rebuild.** `RuntimeConfig.servers`, the dispatcher's
+   adapter map, and the debouncer's server map are all keyed by `server_id` and all derived from
+   one freshly built `cfg.servers`. `Engine.rebuild()` swaps all three in one synchronous step
+   with no `await` between them (§10), so no in-flight event can observe an adapter without its
+   server runtime, or vice versa. The three are never edited independently.

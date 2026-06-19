@@ -15,7 +15,7 @@
 These already exist (or are delivered by earlier sub-plans 02) when this plan runs. **Import** them; never re-declare them:
 
 - `FsEvent`, `FsEventType` from `mediascanmonitor.pipeline.events` (contract §5, owned by sub-plan 02).
-- `normalize_path` from `mediascanmonitor.config.defaults` (contract §6, owned by sub-plan 02) — absolute path, no trailing slash (except root).
+- `normalize_path` from `mediascanmonitor.normalize` (contract §1.1, leaf module owned by sub-plan 01) — pure lexical normalize, no trailing slash (except root); absoluteness is validated upstream at the schema boundary, not here.
 - `IGNORE_DIRS` (`frozenset[str]`, e.g. `{"@eaDir", "#snapshot", "#recycle", "@tmp"}`) from `mediascanmonitor.config.defaults` is the typical caller-supplied `ignore_dirs`; the watcher accepts whatever `frozenset[str]` it is constructed with.
 
 **Contract §5 (for reference):**
@@ -50,9 +50,11 @@ class InotifyBackend:                                # implements WatcherBackend
 # watcher/watch_limit.py
 @dataclass(frozen=True, slots=True)
 class WatchLimitStatus:
-    current_limit: int
-    required: int
-    ok: bool
+    current: int           # live value read from /proc (the kernel ceiling)
+    dirs: int              # raw count of directories that will be watched (one watch each)
+    needed: int            # gate threshold = ceil(dirs * headroom)
+    recommended: int       # kernel ceiling to advise the user = ceil(needed * headroom)
+    ok: bool               # current >= needed
 
 def read_max_user_watches(proc_path: str = "/proc/sys/fs/inotify/max_user_watches") -> int: ...
 def count_dirs(roots: Iterable[str], ignore_dirs: frozenset[str]) -> int: ...
@@ -469,41 +471,45 @@ Append to `tests/watcher/test_watch_limit.py`:
 def test_check_watch_limit_ok_with_headroom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # one dir to watch (the root), default headroom 1.2 -> required margin = 1*1.2 = 1.2
+    # one dir to watch (the root); default headroom 1.2 -> needed = ceil(1*1.2) = 2
     monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 100)
 
     status = watch_limit.check_watch_limit([str(tmp_path)], frozenset())
 
-    assert status.current_limit == 100
-    assert status.required == 1  # raw dir count surfaced to the user
+    assert status.current == 100
+    assert status.dirs == 1               # raw dir count
+    assert status.needed == 2             # ceil(1 * 1.2)
+    assert status.recommended == 3        # ceil(2 * 1.2)
     assert status.ok is True
 
 
 def test_check_watch_limit_not_ok_when_below_headroom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Build 100 directories under the root: required raw count = 101 (root + 100).
+    # Build 100 directories under the root: raw dir count = 101 (root + 100).
     for i in range(100):
         (tmp_path / f"d{i}").mkdir()
-    # headroom 1.2 -> need >= ceil-ish 101*1.2 = 121.2 ; 121 is below the margin.
+    # headroom 1.2 -> needed = ceil(101*1.2) = ceil(121.2) = 122 ; 121 is below it.
     monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 121)
 
     status = watch_limit.check_watch_limit([str(tmp_path)], frozenset())
 
-    assert status.required == 101
-    assert status.ok is False  # 121 < 101 * 1.2 (= 121.2)
+    assert status.dirs == 101
+    assert status.needed == 122
+    assert status.ok is False  # 121 < 122
 
 
 def test_check_watch_limit_ok_exactly_at_headroom_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # required raw count = 1 (root only) ; headroom 2.0 -> margin = 2 ; limit 2 is OK.
+    # raw dir count = 1 (root only) ; headroom 2.0 -> needed = ceil(2.0) = 2 ; limit 2 is OK.
     monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 2)
 
     status = watch_limit.check_watch_limit([str(tmp_path)], frozenset(), headroom=2.0)
 
-    assert status.required == 1
-    assert status.ok is True  # 2 >= 1 * 2.0
+    assert status.dirs == 1
+    assert status.needed == 2
+    assert status.ok is True  # 2 >= 2
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -518,6 +524,7 @@ Edit `mediascanmonitor/watcher/watch_limit.py` — extend the import block and a
 ```python
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -527,9 +534,11 @@ from pathlib import Path
 ```python
 @dataclass(frozen=True, slots=True)
 class WatchLimitStatus:
-    current_limit: int
-    required: int  # number of directories that will be watched (raw count)
-    ok: bool
+    current: int       # live kernel ceiling read from /proc
+    dirs: int          # raw count of directories that will be watched (one watch each)
+    needed: int        # gate threshold = ceil(dirs * headroom)
+    recommended: int   # kernel ceiling to advise the user = ceil(needed * headroom)
+    ok: bool           # current >= needed
 
 
 def check_watch_limit(
@@ -537,16 +546,21 @@ def check_watch_limit(
     ignore_dirs: frozenset[str],
     headroom: float = 1.2,
 ) -> WatchLimitStatus:
-    """Compare the current kernel watch limit against the directories a config
-    will watch. `required` is the raw directory count; `ok` is True when the
-    limit covers that count multiplied by `headroom`.
+    """Measure the directories a config will watch and compare against the current
+    kernel watch limit. The app *measures* `needed`; it never stores a target
+    (contract §8). `needed = ceil(dirs * headroom)`, the gate is simply
+    `current >= needed`, and `recommended` is the kernel ceiling to advise the user.
     """
-    required = count_dirs(roots, ignore_dirs)
+    dirs = count_dirs(roots, ignore_dirs)
+    needed = math.ceil(dirs * headroom)
+    recommended = math.ceil(needed * headroom)
     current = read_max_user_watches()
     return WatchLimitStatus(
-        current_limit=current,
-        required=required,
-        ok=current >= required * headroom,
+        current=current,
+        dirs=dirs,
+        needed=needed,
+        recommended=recommended,
+        ok=current >= needed,
     )
 ```
 
@@ -614,6 +628,8 @@ def test_irrelevant_mask_maps_to_none() -> None:
     # IN_IGNORED (0x8000) and IN_ISDIR alone carry no create/move/delete bit.
     assert ib.mask_to_event_type(0x8000) is None
     assert ib.mask_to_event_type(ib.IN_ISDIR) is None
+    # IN_Q_OVERFLOW is not a file event — events() handles it separately (resync).
+    assert ib.mask_to_event_type(ib.IN_Q_OVERFLOW) is None
 
 
 def test_create_with_isdir_still_maps_to_created() -> None:
@@ -664,6 +680,7 @@ IN_MOVED_FROM = 0x00000040
 IN_MOVED_TO = 0x00000080
 IN_CREATE = 0x00000100
 IN_DELETE = 0x00000200
+IN_Q_OVERFLOW = 0x00004000   # kernel queue overflow — events were dropped; triggers a resync
 IN_ISDIR = 0x40000000
 
 
@@ -869,15 +886,18 @@ Edit `mediascanmonitor/watcher/inotify_backend.py`. Replace the import block at 
 ```python
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from mediascanmonitor.config.defaults import normalize_path
+from mediascanmonitor.normalize import normalize_path
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
 
 if TYPE_CHECKING:
     from asyncinotify import Inotify, Watch
+
+logger = logging.getLogger(__name__)
 ```
 
 Then append the `InotifyBackend` class to the end of the file:
@@ -902,7 +922,14 @@ class InotifyBackend:
     def _add_watch(self, path: str) -> None:
         if path in self._watches:
             return
-        self._watches[path] = self._inotify.add_watch(path, self._add_mask)
+        try:
+            self._watches[path] = self._inotify.add_watch(path, self._add_mask)
+        except OSError as exc:
+            # Adding a watch can fail at runtime (kernel limit / ENOSPC) even though the
+            # startup gate passed, because watches grow as directories appear. Degrade:
+            # log and skip — this directory is unwatched rather than crashing the watcher.
+            # The dashboard's check_watch_limit surfaces the shortfall.
+            logger.warning("inotify add_watch failed for %s: %s", path, exc)
 
     def _remove_watch_tree(self, root: str) -> None:
         prefix = root + os.sep
@@ -995,7 +1022,7 @@ git commit -m "feat(watcher): add InotifyBackend flat watching + mypy override"
 - Modify: `mediascanmonitor/watcher/inotify_backend.py`
 - Test: `tests/watcher/test_inotify_backend.py`
 
-This task extends `events()` so that a **newly created** subdirectory is watched immediately and its existing contents are rescanned (synthetic `created` events), and so that a deleted/moved-away directory has its watch subtree removed.
+This task extends `events()` so that a **newly created** subdirectory is watched immediately and its existing contents are rescanned (synthetic `created` events), a deleted/moved-away directory has its watch subtree removed, and an **`IN_Q_OVERFLOW`** (kernel dropped events) triggers a resync across all roots (contract §8).
 
 - [ ] **Step 1: Add the failing tests**
 
@@ -1072,6 +1099,30 @@ async def test_directory_deletion_removes_watches(tmp_path: Path) -> None:
     finally:
         await agen.aclose()
         await backend.aclose()
+
+
+async def test_add_watch_failure_is_logged_not_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Simulate the kernel watch limit (ENOSPC) being hit at add_watch time: the watcher
+    # must log and degrade (leave the dir unwatched), never crash (contract §8).
+    (tmp_path / "Show").mkdir()
+    backend = InotifyBackend(IGNORE)
+
+    def boom(path: object, mask: object) -> None:
+        raise OSError(28, "No space left on device")  # errno 28 = ENOSPC
+
+    monkeypatch.setattr(backend._inotify, "add_watch", boom)  # noqa: SLF001
+    try:
+        with caplog.at_level("WARNING"):
+            backend.set_roots({str(tmp_path)})  # must NOT raise
+
+        assert str(tmp_path) not in backend._watches  # noqa: SLF001 — degraded, not watched
+        assert any("add_watch failed" in r.getMessage() for r in caplog.records)
+    finally:
+        await backend.aclose()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1086,13 +1137,23 @@ Edit `mediascanmonitor/watcher/inotify_backend.py` — replace the `events()` me
 ```python
     async def events(self) -> AsyncIterator[FsEvent]:
         async for event in self._inotify:
+            mask = int(event.mask)
+            if mask & IN_Q_OVERFLOW:
+                # Kernel dropped events (queue overflow). Re-attach watches across all
+                # roots (a subdir whose CREATE was dropped is otherwise unwatched) and
+                # re-emit their contents as synthetic `created` events so nothing is
+                # silently missed. The per-scan_key debouncer collapses the burst.
+                logger.warning("inotify queue overflow; resyncing watches under all roots")
+                for root in sorted(self._roots):
+                    for synthetic in self._walk_add_watches(root):
+                        yield synthetic
+                continue
             path_obj = event.path
             if path_obj is None:
                 continue
             path = normalize_path(str(path_obj))
             if self._is_ignored(path):
                 continue
-            mask = int(event.mask)
             event_type = mask_to_event_type(mask)
             if event_type is None:
                 continue
@@ -1119,7 +1180,7 @@ Edit `mediascanmonitor/watcher/inotify_backend.py` — replace the `events()` me
 - [ ] **Step 4: Run tests to verify they pass (on Linux)**
 
 Run: `python -m pytest tests/watcher/test_inotify_backend.py -v`
-Expected (Linux): PASS (7 passed). On non-Linux: 7 skipped.
+Expected (Linux): PASS (8 passed). On non-Linux: 8 skipped.
 
 - [ ] **Step 5: Lint & type-check**
 
@@ -1142,7 +1203,7 @@ git commit -m "feat(watcher): recursive dynamic watch add/remove with attach-rac
 - [ ] **Step 1: Run the full watcher test suite**
 
 Run: `python -m pytest tests/watcher/ -v`
-Expected: on Linux, all pass (5 + 8 + 7 + 7 = 27 tests). On non-Linux, the 7 inotify integration tests are skipped and the remaining 20 pass.
+Expected: on Linux, all pass (5 + 8 + 7 + 8 = 28 tests). On non-Linux, the 8 inotify integration tests are skipped and the remaining 20 pass.
 
 - [ ] **Step 2: Run the whole project test suite (no regressions)**
 
@@ -1175,6 +1236,8 @@ git commit -m "chore(watcher): formatting/lint pass for watcher package"
 - **`add_watch` is idempotent:** asyncinotify returns the existing `Watch` for an already-watched path, so `_walk_add_watches` re-touching an attached directory is safe.
 - **No extension filtering here.** Every matching create/move/delete is emitted regardless of extension; `pipeline/filters.py` (sub-plan 05) applies per-folder extension matching.
 - **Duplicate events are expected and fine.** A file that lands in a freshly created directory may be reported both by the rescan (synthetic `created`) and by a subsequent real inotify event. The per-`scan_key` debouncer collapses them.
+- **Queue overflow → resync (contract §8).** On `IN_Q_OVERFLOW` the backend logs a warning and re-walks all roots — re-attaching any watch whose `CREATE` was dropped and re-emitting their contents as synthetic `created` events, so a dropped event never becomes a permanently missed scan. Deterministically forcing a kernel queue overflow in a test is impractical; this path is covered by the logic plus the `IN_Q_OVERFLOW`-maps-to-`None` mask unit test (not an integration test). Exercise it manually with a large burst if you want belt-and-suspenders.
+- **`add_watch` degradation (contract §8).** A runtime `add_watch` failure (kernel limit / `ENOSPC`) is logged and skipped — the directory is left unwatched rather than crashing the watcher; `check_watch_limit` surfaces the shortfall. Same testability caveat: exhausting the kernel limit on demand is impractical, so this is verified by the `try/except` logic, not an integration test.
 
 ---
 
@@ -1186,6 +1249,7 @@ git commit -m "chore(watcher): formatting/lint pass for watcher package"
 - `WatchLimitStatus`, `read_max_user_watches(proc_path=...)`, `count_dirs`, `check_watch_limit(headroom=1.2)` — Tasks 2–4, signatures verbatim. ✓
 - `InotifyBackend(ignore_dirs: frozenset[str])` implementing `WatcherBackend`; per-dir watch; subdir-create → add watch + rescan synthetic `created`; dir delete/moved_from → remove watches; mask→`FsEventType`; skip `ignore_dirs`; normalize paths — Tasks 5–7. ✓
 - Pure mask→`FsEventType` helper, unit-tested without real inotify — Task 5. ✓
+- Resilience (contract §8): `IN_Q_OVERFLOW` → log + resync (re-walk roots, synthetic `created`); runtime `add_watch` failure → log + skip, never raised — Tasks 5–7 (constant + mask test in Task 5; degradation in Task 6; overflow handling in Task 7). ✓
 - "No extension filtering in the backend" — stated in module docstring + Notes. ✓
 - UNIT tests run everywhere (watch_limit, FakeWatcher, mask mapping); INTEGRATION marked Linux-only via `pytestmark` skipif — Tasks 1–7. ✓
 - Integration determinism via `asyncio.wait_for` draining, no arbitrary sleeps; negative case via `TimeoutError`/ordering — Task 6/7 + "Test markers & determinism". ✓
@@ -1194,7 +1258,7 @@ git commit -m "chore(watcher): formatting/lint pass for watcher package"
 
 **2. Placeholder scan:** No "TBD"/"handle edge cases"/"similar to"/"write tests for the above" — every code and test step contains complete code. ✓
 
-**3. Type/name consistency:** `mask_to_event_type`, `mask_is_dir`, `IN_CREATE/IN_MOVED_TO/IN_DELETE/IN_MOVED_FROM/IN_ISDIR`, `_walk_add_watches`, `_remove_watch_tree`, `_add_watch`, `_is_ignored`, `_watches`, `_roots`, `WatchLimitStatus(current_limit, required, ok)` are used identically across Tasks 4–8. `FsEvent(path, event_type, is_dir)` positional construction matches contract §5 field order. `FakeWatcher` API (`set_roots`, `feed`, `close_stream`, `events`, `aclose`, `roots`) is consistent between the implementation and its tests. ✓
+**3. Type/name consistency:** `mask_to_event_type`, `mask_is_dir`, `IN_CREATE/IN_MOVED_TO/IN_DELETE/IN_MOVED_FROM/IN_ISDIR`, `_walk_add_watches`, `_remove_watch_tree`, `_add_watch`, `_is_ignored`, `_watches`, `_roots`, `WatchLimitStatus(current, dirs, needed, recommended, ok)` are used identically across Tasks 4–8. `FsEvent(path, event_type, is_dir)` positional construction matches contract §5 field order. `FakeWatcher` API (`set_roots`, `feed`, `close_stream`, `events`, `aclose`, `roots`) is consistent between the implementation and its tests. ✓
 
 **Contract deviations:** none. All public names and signatures match contract §8 verbatim; `IN_*` constants and the `mask_*` helpers are additive, asyncinotify-free internals (not contract symbols) and introduce no naming conflict.
 

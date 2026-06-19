@@ -87,6 +87,7 @@ class Debouncer:                                                              # 
                  servers: dict[int, ServerRuntime], *,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None: ...
     async def submit(self, req: ScanRequest) -> None: ...
+    def update_servers(self, servers: dict[int, ServerRuntime]) -> None: ...   # rebuild swap
     async def aclose(self) -> None: ...
 class Dispatcher:                                                            # pipeline/dispatcher.py
     def __init__(self, adapters: dict[int, ServerAdapter]) -> None: ...
@@ -94,16 +95,17 @@ class Dispatcher:                                                            # p
     def set_adapters(self, adapters: dict[int, ServerAdapter]) -> None: ...
 ```
 
-**One assumed signature owned by sub-plan 01 (`db/session.py`)**, used only inside the CLI's real-startup path: `def init_db(db_path: Path) -> Callable[[], Session]:` — runs `create_all` + migrate and returns a `Session` factory. This plan references it in `cli._build_repo()` only; that path is exercised by sub-plan 01's tests and Phase-1 e2e, not unit-tested here (the CLI's testable surface injects the repo).
+**Two helpers owned by sub-plan 01 (`db/session.py`)**, used only inside the CLI's real-startup path (contract §4): `def init_db(db_path) -> Engine` (runs `create_all` + migrate, returns the **Engine**) and `def session_factory(engine) -> Callable[[], Session]`. A `Repo` is assembled as `Repo(session_factory(init_db(db_path)), box)` — `init_db` does **not** return a factory. This plan references both in `cli._build_repo()` only; that path is exercised by sub-plan 01's tests and Phase-1 e2e, not unit-tested here (the CLI's testable surface injects the repo).
 
 ### Design decisions specific to this sub-plan (not deviations — contract is silent on these)
 
 1. **One `httpx.AsyncClient` per enabled server.** `build_client` takes per-server `verify_tls`/`timeout_seconds`, so the engine builds one client per server and passes it to `create_adapter`. The engine owns these clients and closes them in `aclose()` and on `rebuild()` (old clients closed after the swap).
 2. **`Dispatcher.dispatch` returns `TriggerResult`, but `Debouncer` wants `Callable[[ScanRequest], Awaitable[None]]`.** The engine passes a thin `self._dispatch` wrapper that awaits `dispatcher.dispatch(req)` and returns `None` (keeps `mypy --strict` happy; never special-cases a backend).
-3. **`rebuild()` does NOT recreate the `Debouncer`** (the contract's rebuild list is: `set_roots`, rebuild adapters, `dispatcher.set_adapters`, swap routing snapshot — debouncer is not listed). To still honor live server add/remove and changed debounce policy *without* dropping pending timers, the engine constructs the `Debouncer` once with a **reference to an engine-owned `dict[int, ServerRuntime]`** and updates that dict **in place** during the atomic swap. The same single `Dispatcher` instance is reused (only its adapter map is swapped). This means a *burst already mid-window* keeps firing on the same debouncer — nothing is cancelled or dropped.
-4. **Atomicity = no `await` between swaps.** `build_runtime_config` (the only pre-swap `await`, off-loop via `to_thread`) and old-client `aclose()` (after the swap) bracket a fully synchronous swap block: `dispatcher.set_adapters` → in-place `servers` update → `self._config = new` reference reassignment → `watcher.set_roots`. `_handle_event` snapshots `self._config` into a local before any `await`, so each in-flight event routes against one consistent snapshot.
+3. **`rebuild()` does NOT recreate the `Debouncer`** — it calls `debouncer.update_servers(new_config.servers)` (contract §9/§10), which swaps the per-server policy map in place, keeping the instance and any survivors' pending timers while cancelling timers for servers that were removed. The same single `Dispatcher` instance is reused (only its adapter map is swapped via `set_adapters`). A *burst already mid-window* for a surviving server keeps firing; a removed server's pending timer is dropped (no dispatch into a now-missing adapter).
+4. **Atomicity = no `await` between swaps.** `build_runtime_config` + `_build_adapters` (the only pre-swap `await`s, off-loop) and old-client `aclose()` (after the swap) bracket a fully synchronous swap block: `dispatcher.set_adapters` → `debouncer.update_servers` → `self._config = new` reference reassignment → `watcher.set_roots`. `_handle_event` snapshots `self._config` into a local before any `await`, so each in-flight event routes against one consistent snapshot (invariant 7).
 5. **Logging redaction processor.** `configure_logging` installs a `_redact_secrets` processor that masks values for a fixed set of sensitive keys (`token`, `secret`, `password`, `api_key`, `authorization`, `x_plex_token`). This makes "secrets are not emitted" a real, testable invariant (CLAUDE rule 5) rather than a hope.
-6. **`run` without `--no-web` prints a clear Phase-3 message to stderr and returns exit code `2`** (the feature is unavailable, not a crash) — never a stack trace. `run --no-web` returns `0` on clean shutdown.
+6. **`run` without `--no-web` prints a clear Phase-3 message to stderr and returns exit code `2`** (the feature is unavailable, not a crash) — never a stack trace. `run --no-web` returns `0` on clean shutdown, `3` if the inotify gate blocked startup.
+7. **Inotify gate (contract §8/§10).** `Engine.start()` measures the watch limit (`check_watch_limit`, off-loop) only when the config has watch paths, reads the `inotify_gate` policy (`repo.get_setting`, default `"enforce"`), and — if `enforce` + `not ok` — sets `state = EngineState.blocked`, logs the exact remediation line, and returns **without** attaching the watcher (a non-fatal, retryable state, not a process exit). The web layer (Phase 3) keeps running so the limit can be fixed from the UI; in Phase-1 headless there is no UI, so `serve_headless` observes the `blocked` state and exits `3` (the Bash-style block/exit). `inotify_gate == "off"` bypasses the gate entirely. An empty config needs zero watches and is never blocked. Full `blocked`↔`running` recovery on `rebuild()` is finalized in Phase 3 (headless never triggers `rebuild`).
 
 ---
 
@@ -467,8 +469,9 @@ import pytest
 from mediascanmonitor import engine as engine_module
 from mediascanmonitor.db.models import DebounceMode, ScanMode
 from mediascanmonitor.db.repo import Repo
-from mediascanmonitor.engine import Engine
+from mediascanmonitor.engine import Engine, EngineState
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
+from mediascanmonitor.watcher.watch_limit import WatchLimitStatus
 
 from tests._helpers import (
     FakeClient,
@@ -481,10 +484,28 @@ from tests._helpers import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _gate_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default: the inotify gate passes so start() attaches the watcher. The blocked/off
+    # tests override check_watch_limit to report a shortfall.
+    monkeypatch.setattr(
+        engine_module,
+        "check_watch_limit",
+        lambda paths, ignore: WatchLimitStatus(
+            current=1_000_000, dirs=0, needed=0, recommended=0, ok=True
+        ),
+    )
+
+
 @pytest.fixture
 def stub_repo() -> Repo:
-    # build_runtime_config is monkeypatched in every test, so the repo is never queried.
-    return cast(Repo, object())
+    # build_runtime_config is monkeypatched in every test; start() reads only
+    # get_setting("inotify_gate"), so the stub provides just that.
+    class _StubRepo:
+        def get_setting(self, key: str) -> str | None:
+            return "enforce"
+
+    return cast(Repo, _StubRepo())
 
 
 def _patch_factories(
@@ -600,6 +621,108 @@ async def test_aclose_closes_watcher_debouncer_and_clients(
 
     assert watcher.closed is True
     assert clients and all(c.closed for c in clients)
+
+
+async def test_blocked_when_watch_limit_insufficient_and_enforced(
+    monkeypatch: pytest.MonkeyPatch, stub_repo: Repo
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(
+        engine_module,
+        "check_watch_limit",
+        lambda paths, ignore: WatchLimitStatus(
+            current=10, dirs=100, needed=120, recommended=144, ok=False
+        ),
+    )
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    watcher = FakeWatcher()
+    engine = Engine(stub_repo, watcher=watcher)
+    await engine.start()  # returns immediately: blocked, watcher never attached
+
+    assert engine.state is EngineState.blocked
+    assert engine.watch_limit is not None and engine.watch_limit.ok is False
+    assert watcher.roots_history == []  # gate blocked before set_roots
+    await engine.aclose()
+
+
+async def test_gate_off_attaches_despite_insufficient_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(
+        engine_module,
+        "check_watch_limit",
+        lambda paths, ignore: WatchLimitStatus(
+            current=10, dirs=100, needed=120, recommended=144, ok=False
+        ),
+    )
+
+    class _OffRepo:
+        def get_setting(self, key: str) -> str | None:
+            return "off"
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    watcher = FakeWatcher()
+    engine = Engine(cast(Repo, _OffRepo()), watcher=watcher)
+    await watcher.aclose()  # end the event stream immediately
+    await engine.start()
+
+    assert engine.state is EngineState.running       # attached despite not-ok limit (gate off)
+    assert watcher.roots_history == [{"/data/tv"}]
+    await engine.aclose()
+
+
+async def test_unsupported_server_is_skipped_not_fatal(
+    monkeypatch: pytest.MonkeyPatch, stub_repo: Repo
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+
+    def fake_create_adapter(server: object, client: object) -> RecordingAdapter:
+        sr = cast("engine_module.ServerRuntime", server)  # type: ignore[attr-defined]
+        if sr.server_id == 2:
+            raise ValueError("no adapter registered for type 'emby'")
+        adapter = RecordingAdapter(
+            sr, cast("engine_module.httpx.AsyncClient", client)  # type: ignore[attr-defined]
+        )
+        created[sr.server_id] = adapter
+        return adapter
+
+    monkeypatch.setattr(engine_module, "create_adapter", fake_create_adapter)
+    monkeypatch.setattr(engine_module, "build_client", lambda **_: FakeClient())
+
+    s1 = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    s2 = make_server_runtime(2, name="emby", debounce=DebounceMode.off)
+    r1 = make_route(1, name="plex", path="/data/tv", library_id="2")
+    r2 = make_route(2, name="emby", path="/data/tv", library_id="5")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([r1, r2], [s1, s2])
+    )
+
+    watcher = FakeWatcher()
+    engine = Engine(stub_repo, watcher=watcher)
+    await watcher.emit(
+        FsEvent(path="/data/tv/Show/ep.mkv", event_type=FsEventType.created, is_dir=False)
+    )
+    await watcher.aclose()
+    await engine.start()  # must NOT raise despite server 2's adapter construction failing
+
+    assert engine.state is EngineState.running
+    assert set(created) == {1}              # server 2 skipped; server 1 built
+    assert len(created[1].calls) == 1       # server 1 still dispatches
+    await engine.aclose()
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -622,15 +745,12 @@ watcher is injectable so non-Linux dev/tests can supply a fake backend.
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 
 import httpx
 import structlog
 
-from mediascanmonitor.config.runtime import (
-    RuntimeConfig,
-    ServerRuntime,
-    build_runtime_config,
-)
+from mediascanmonitor.config.runtime import RuntimeConfig, build_runtime_config
 from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.pipeline.debounce import Debouncer
 from mediascanmonitor.pipeline.dispatcher import Dispatcher
@@ -640,8 +760,16 @@ from mediascanmonitor.servers.base import ServerAdapter
 from mediascanmonitor.servers.http import build_client
 from mediascanmonitor.servers.registry import create_adapter
 from mediascanmonitor.watcher.base import WatcherBackend
+from mediascanmonitor.watcher.watch_limit import WatchLimitStatus, check_watch_limit
 
 log = structlog.get_logger("engine")
+
+
+class EngineState(str, Enum):
+    starting = "starting"
+    running = "running"
+    blocked = "blocked"   # inotify gate not satisfied; watcher not attached
+    stopped = "stopped"
 
 
 class Engine:
@@ -653,23 +781,43 @@ class Engine:
         self._config: RuntimeConfig | None = None
         self._dispatcher: Dispatcher | None = None
         self._debouncer: Debouncer | None = None
-        # Engine-owned, MUTATED IN PLACE on rebuild so the Debouncer (which holds
-        # this exact reference) always sees the current per-server policy.
-        self._servers: dict[int, ServerRuntime] = {}
         self._clients: dict[int, httpx.AsyncClient] = {}
         self._started = False
         self._lock = asyncio.Lock()
+        self.state: EngineState = EngineState.stopped
+        self.watch_limit: WatchLimitStatus | None = None
 
     # -- public lifecycle ----------------------------------------------------
 
     async def start(self) -> None:
-        """Build the runtime, wire the pipeline, then consume watcher events."""
+        """Build the runtime, consult the inotify gate, wire the pipeline, consume events."""
         if self._started:
             raise RuntimeError("Engine.start() called more than once")
         self._started = True
+        self.state = EngineState.starting
 
         config = await asyncio.to_thread(build_runtime_config, self._repo)
         self._config = config
+
+        # inotify gate (contract §8/§10): only meaningful when something is watched.
+        if config.watch_paths:
+            policy = await asyncio.to_thread(self._repo.get_setting, "inotify_gate")
+            self.watch_limit = await asyncio.to_thread(
+                check_watch_limit, config.watch_paths, config.ignore_dirs
+            )
+            if (policy or "enforce") == "enforce" and not self.watch_limit.ok:
+                self.state = EngineState.blocked
+                log.error(
+                    "engine.blocked",
+                    reason="inotify watch limit too low",
+                    current=self.watch_limit.current,
+                    needed=self.watch_limit.needed,
+                    recommended=self.watch_limit.recommended,
+                    remediation=(
+                        f"raise fs.inotify.max_user_watches to >= {self.watch_limit.recommended}"
+                    ),
+                )
+                return  # do NOT attach the watcher; serve_headless observes `blocked` and exits
 
         if self._watcher is None:
             # Lazy import keeps the engine importable on non-Linux dev machines.
@@ -677,13 +825,13 @@ class Engine:
 
             self._watcher = InotifyBackend(config.ignore_dirs)
 
-        adapters, clients = self._build_adapters(config)
+        adapters, clients = await self._build_adapters(config)
         self._clients = clients
-        self._servers = dict(config.servers)
         self._dispatcher = Dispatcher(adapters)
-        self._debouncer = Debouncer(self._dispatch, self._servers)
+        self._debouncer = Debouncer(self._dispatch, config.servers)
 
         self._watcher.set_roots(set(config.watch_paths))
+        self.state = EngineState.running
         log.info(
             "engine.started",
             watch_paths=sorted(config.watch_paths),
@@ -703,11 +851,12 @@ class Engine:
         for client in self._clients.values():
             await client.aclose()
         self._clients = {}
+        self.state = EngineState.stopped
         log.info("engine.closed")
 
     # -- internals -----------------------------------------------------------
 
-    def _build_adapters(
+    async def _build_adapters(
         self, config: RuntimeConfig
     ) -> tuple[dict[int, ServerAdapter], dict[int, httpx.AsyncClient]]:
         adapters: dict[int, ServerAdapter] = {}
@@ -716,8 +865,19 @@ class Engine:
             client = build_client(
                 verify_tls=server.verify_tls, timeout_seconds=server.timeout_seconds
             )
+            try:
+                adapters[server_id] = create_adapter(server, client)
+            except Exception as exc:  # isolate: one unsupported server never blocks the rest
+                log.warning(
+                    "engine.adapter_skipped",
+                    server_id=server_id,
+                    server_name=server.name,
+                    server_type=server.type.value,
+                    error=repr(exc),
+                )
+                await client.aclose()
+                continue
             clients[server_id] = client
-            adapters[server_id] = create_adapter(server, client)
         return adapters, clients
 
     async def _dispatch(self, req: ScanRequest) -> None:
@@ -741,7 +901,7 @@ class Engine:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pytest tests/test_engine.py -v`
-Expected: PASS — `3 passed`.
+Expected: PASS — `6 passed`.
 
 - [ ] **Step 5: Type-check + lint**
 
@@ -882,12 +1042,17 @@ In `mediascanmonitor/engine.py`, add this method to `Engine` (place it directly 
         fully synchronous swap block, so no awaitable point splits a routing
         decision: every in-flight event uses one consistent snapshot.
         """
-        if not self._started or self._dispatcher is None or self._watcher is None:
+        if (
+            not self._started
+            or self._dispatcher is None
+            or self._debouncer is None
+            or self._watcher is None
+        ):
             raise RuntimeError("Engine.rebuild() called before start()")
 
         async with self._lock:
             new_config = await asyncio.to_thread(build_runtime_config, self._repo)
-            new_adapters, new_clients = self._build_adapters(new_config)
+            new_adapters, new_clients = await self._build_adapters(new_config)
 
             old_clients = self._clients
             old_paths = self._config.watch_paths if self._config else frozenset()
@@ -895,8 +1060,7 @@ In `mediascanmonitor/engine.py`, add this method to `Engine` (place it directly 
 
             # --- atomic swap (NO await between these statements) -------------
             self._dispatcher.set_adapters(new_adapters)
-            self._servers.clear()
-            self._servers.update(new_config.servers)
+            self._debouncer.update_servers(new_config.servers)
             self._config = new_config
             self._clients = new_clients
             self._watcher.set_roots(set(new_paths))
@@ -923,7 +1087,7 @@ Expected: PASS — `3 passed`.
 - [ ] **Step 5: Run the full engine suite + type-check + lint**
 
 Run: `pytest tests/test_engine.py -v && mypy mediascanmonitor/engine.py && ruff check mediascanmonitor/engine.py tests/test_engine.py`
-Expected: `6 passed`; no mypy/ruff errors.
+Expected: `9 passed`; no mypy/ruff errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1012,8 +1176,9 @@ def test_run_no_web_invokes_serve_headless(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(cli_module, "_build_repo", lambda: cast(Repo, object()))
     monkeypatch.setattr(cli_module, "configure_logging", lambda **_: None)
 
-    async def fake_serve(repo: Repo) -> None:
+    async def fake_serve(repo: Repo) -> int:
         calls.append(True)
+        return 0
 
     monkeypatch.setattr(cli_module, "serve_headless", fake_serve)
 
@@ -1096,8 +1261,8 @@ from mediascanmonitor import __version__
 from mediascanmonitor import engine as engine_module
 from mediascanmonitor.db.crypto import SecretBox, load_or_create_key
 from mediascanmonitor.db.repo import Repo
-from mediascanmonitor.db.session import init_db
-from mediascanmonitor.engine import Engine
+from mediascanmonitor.db.session import init_db, session_factory
+from mediascanmonitor.engine import Engine, EngineState
 from mediascanmonitor.observ.logging import configure_logging
 from mediascanmonitor.watcher.base import WatcherBackend
 
@@ -1136,8 +1301,8 @@ def _build_repo() -> Repo:
     db_path = Path(os.environ.get("MSM_DB_PATH", _DEFAULT_DB_PATH))
     env_key = os.environ.get("MSM_SECRET_KEY")
     box = SecretBox(load_or_create_key(key_path, env_key=env_key))
-    session_factory = init_db(db_path)
-    return Repo(session_factory, box)
+    engine = init_db(db_path)  # returns the Engine (contract §4); not a factory
+    return Repo(session_factory(engine), box)
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
@@ -1152,11 +1317,13 @@ async def serve_headless(
     watcher: WatcherBackend | None = None,
     stop_event: asyncio.Event | None = None,
     install_signals: bool = True,
-) -> None:
+) -> int:
     """Run the engine until SIGINT/SIGTERM (or ``stop_event``), then shut down.
 
-    Designed for testability: inject ``watcher`` and ``stop_event`` and set
-    ``install_signals=False`` to drive the lifecycle without real signals.
+    Returns a process exit code: ``0`` on clean shutdown, ``3`` if the inotify gate
+    blocked startup (contract §10 — Bash-style block/exit, since headless has no UI to
+    recover through). Designed for testability: inject ``watcher`` and ``stop_event`` and
+    set ``install_signals=False`` to drive the lifecycle without real signals.
     """
     engine = Engine(repo, watcher=watcher)
     stop = stop_event if stop_event is not None else asyncio.Event()
@@ -1168,6 +1335,7 @@ async def serve_headless(
     stop_task = asyncio.create_task(stop.wait())
     try:
         await asyncio.wait({start_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        return 3 if engine.state is EngineState.blocked else 0
     finally:
         await engine.aclose()  # closes the watcher -> events() ends -> start_task returns
         with contextlib.suppress(asyncio.CancelledError):
@@ -1193,8 +1361,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     configure_logging()
-    asyncio.run(serve_headless(repo))
-    return 0
+    return asyncio.run(serve_headless(repo))  # 0 clean, 3 if the inotify gate blocked startup
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1245,7 +1412,7 @@ git commit -m "feat(cli): implement headless run --no-web; Phase-3 message for w
 - [ ] **Step 1: Run the whole test suite**
 
 Run: `pytest`
-Expected: all tests pass (logging 4 + engine 6 + cli 8 + any sibling sub-plan suites), e.g. `... passed`.
+Expected: all tests pass (logging 4 + engine 9 + cli 8 + any sibling sub-plan suites), e.g. `... passed`.
 
 - [ ] **Step 2: Type-check the package**
 
@@ -1274,10 +1441,12 @@ git commit -m "chore(phase1-06): green ruff/mypy/pytest for engine, cli, logging
 |---|---|
 | `observ/logging.py` `configure_logging(json_logs, level)` + secret-not-emitted smoke | Task 1 |
 | `Engine.__init__(repo, *, watcher=None)`, injectable watcher (default InotifyBackend) | Task 3 (`__init__`, lazy `InotifyBackend`) |
-| `Engine.start()` — build runtime → adapters/clients → dispatcher+debouncer → set roots → consume events → route → submit | Task 3 |
-| DB calls via `asyncio.to_thread` | Task 3 (`start`), Task 4 (`rebuild`) |
-| `Engine.rebuild()` — rebuild config, diff watch_paths + `set_roots`, rebuild adapters, `set_adapters`, swap snapshot, no restart, no dropped events | Task 4 |
-| `Engine.aclose()` | Task 3 |
+| `Engine.start()` — build runtime → inotify gate → adapters/clients → dispatcher+debouncer → set roots → consume events → route → submit | Task 3 |
+| Inotify gate (contract §8/§10): `EngineState.blocked` when `enforce` + limit too low; `off` bypass; headless exit 3 | Task 3 `test_blocked_when_watch_limit_insufficient_and_enforced`, `test_gate_off_attaches_despite_insufficient_limit` |
+| Per-server adapter isolation (unregistered/misconfigured server skipped, not fatal — invariant 6) | Task 3 `test_unsupported_server_is_skipped_not_fatal` |
+| DB calls via `asyncio.to_thread` (`build_runtime_config`, `get_setting`, `check_watch_limit`) | Task 3 (`start`), Task 4 (`rebuild`) |
+| `Engine.rebuild()` — rebuild config, `set_adapters`, `debouncer.update_servers`, swap snapshot, diff watch_paths + `set_roots`, no restart, no dropped events | Task 4 |
+| `Engine.aclose()` (→ `EngineState.stopped`) | Task 3 |
 | Engine wiring test (FakeWatcher + recording fake adapter via monkeypatched `create_adapter`, `off` debounce) → assert `trigger` got the right `ScanRequest` | Task 3 `test_event_routes_to_adapter_trigger` |
 | rebuild test: add folder → union to `set_roots`; new folder routes; removed folder no longer routes; no event dropped (atomic swap) | Task 4 `test_rebuild_adds_then_removes_roots_and_reroutes` |
 | CLI `run --no-web` starts + shuts down cleanly on simulated signal (testable coroutine with injected stop/watcher) | Task 5 `test_serve_headless_shuts_down_on_stop_event`, `test_run_no_web_invokes_serve_headless` |
@@ -1287,11 +1456,11 @@ git commit -m "chore(phase1-06): green ruff/mypy/pytest for engine, cli, logging
 | Fail fast on startup/config errors with a clear message | Task 5 `_cmd_run` try/except + `test_run_no_web_reports_startup_failure` |
 | mypy --strict / ruff / line-length 100 / `from __future__ import annotations` | Every code block; Task 6 gate |
 
-No gaps. No contract deviations: all consumed names match §1–§10 verbatim; rebuild follows §10's listed steps; the debouncer-keeps-live-servers-ref and one-client-per-server choices fill silences the contract leaves open (documented under "Design decisions").
+No gaps. No contract deviations: all consumed names match §1–§10 verbatim; `start()` consults the inotify gate and `rebuild()` follows §10's steps (`set_adapters` → `debouncer.update_servers` → swap snapshot → `set_roots`); the one-client-per-server choice fills a silence the contract leaves open (documented under "Design decisions").
 
 **2. Placeholder scan:** No `TBD`/`TODO`/"add error handling"/"similar to Task N". Every code step shows complete code; every command shows expected output.
 
-**3. Type consistency:** `serve_headless(repo, *, watcher, stop_event, install_signals)`, `_build_repo() -> Repo`, `_cmd_run(args) -> int`, `Engine.__init__/start/rebuild/aclose/_dispatch/_handle_event/_build_adapters`, `configure_logging(*, json_logs, level)`, `_redact_secrets(logger, method_name, event_dict)` are referenced identically across tasks. `RecordingAdapter`/`FakeClient`/`make_config`/`make_route`/`make_server_runtime`/`wait_for` defined once in `tests/_helpers.py` (which re-exports the canonical `FakeWatcher` from `mediascanmonitor.watcher.base`, sub-plan 04) and imported with matching names/signatures in Tasks 3–5. `Debouncer(self._dispatch, self._servers)` matches the `Callable[[ScanRequest], Awaitable[None]]` signature via the `_dispatch` wrapper. `cli_module.engine_module` is exposed because `cli.py` does `from mediascanmonitor import engine as engine_module`, which the CLI test monkeypatches.
+**3. Type consistency:** `serve_headless(repo, *, watcher, stop_event, install_signals)`, `_build_repo() -> Repo`, `_cmd_run(args) -> int`, `Engine.__init__/start/rebuild/aclose/_dispatch/_handle_event/_build_adapters`, `configure_logging(*, json_logs, level)`, `_redact_secrets(logger, method_name, event_dict)` are referenced identically across tasks. `RecordingAdapter`/`FakeClient`/`make_config`/`make_route`/`make_server_runtime`/`wait_for` defined once in `tests/_helpers.py` (which re-exports the canonical `FakeWatcher` from `mediascanmonitor.watcher.base`, sub-plan 04) and imported with matching names/signatures in Tasks 3–5. `Debouncer(self._dispatch, config.servers)` matches the `Callable[[ScanRequest], Awaitable[None]]` signature via the `_dispatch` wrapper, and `debouncer.update_servers(new_config.servers)` swaps policy on rebuild. `EngineState`/`Engine.watch_limit` and `check_watch_limit`/`WatchLimitStatus` (sub-plan 04) are referenced identically in `engine.py` and `tests/test_engine.py`. `cli_module.engine_module` is exposed because `cli.py` does `from mediascanmonitor import engine as engine_module`, which the CLI test monkeypatches.
 
 ---
 

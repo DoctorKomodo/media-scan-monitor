@@ -14,8 +14,8 @@ code in every step, exact commands with expected output.
 | # | File | Builds |
 |---|------|--------|
 | — | [`…-00-interface-contract.md`](2026-06-17-phase1-00-interface-contract.md) | **FROZEN** shared vocabulary: enums, DB models, `SecretBox`, `Repo`, `FsEvent`/`ScanRequest`, `RuntimeConfig`, `ServerAdapter`, watcher/pipeline/engine signatures, cross-plan invariants. Not code — the spine the six plans agree on. |
-| 01 | [`…-01-db-and-crypto.md`](2026-06-17-phase1-01-db-and-crypto.md) | `db/{models,schemas,crypto,session,repo}.py` — SQLModel schema, Fernet secrets, sync `Repo` (CRUD + cascade + `resolve_secret`). |
-| 02 | [`…-02-config-runtime.md`](2026-06-17-phase1-02-config-runtime.md) | `config/{defaults,runtime}.py` + `pipeline/events.py` — normalizers/presets, `FsEvent`/`ScanRequest`, `build_runtime_config`. |
+| 01 | [`…-01-db-and-crypto.md`](2026-06-17-phase1-01-db-and-crypto.md) | `normalize.py` + `db/{models,schemas,crypto,session,repo}.py` — pure normalizers (leaf), SQLModel schema, Fernet secrets, sync `Repo` (CRUD + cascade + `resolve_secret`). |
+| 02 | [`…-02-config-runtime.md`](2026-06-17-phase1-02-config-runtime.md) | `config/{defaults,runtime}.py` + `pipeline/events.py` — presets/defaults, `FsEvent`/`ScanRequest`, `build_runtime_config` (reuses `normalize.py`). |
 | 03 | [`…-03-server-adapters.md`](2026-06-17-phase1-03-server-adapters.md) | `servers/{base,registry,http,plex}.py` — `ServerAdapter` ABC, registry, httpx+tenacity, Plex adapter. |
 | 04 | [`…-04-watcher.md`](2026-06-17-phase1-04-watcher.md) | `watcher/{base,watch_limit,inotify_backend}.py` — `WatcherBackend` + canonical `FakeWatcher`, watch-limit gate, recursive async inotify. |
 | 05 | [`…-05-pipeline.md`](2026-06-17-phase1-05-pipeline.md) | `pipeline/{filters,router,debounce,dispatcher}.py` — routing, per-server debounce, isolated fan-out. |
@@ -30,31 +30,34 @@ code in every step, exact commands with expected output.
                └────────────────────────────────────────────┘
 ```
 
-## Canonical execution order (resolves the file-level interleave)
+## Canonical execution order
 
-01 and 02 share `config/defaults.py` and have a function-level cycle (01's `Repo.set_filetypes`
-needs `normalize_extension` from 02; 02's `build_runtime_config` needs 01's `Repo`). Build in this
-order — it is acyclic at the task level:
+Moving the pure normalizers into the leaf module `mediascanmonitor/normalize.py` (owned by 01,
+imports nothing from the package) removes the former 01↔02 cycle: 01 no longer reaches up into
+`config/` for `normalize_extension`, and 02 depends forward onto 01 only. The plans are now
+acyclic at the **module** level, so the order below is just the dependency-graph topological sort
+— no file-level interleave to special-case:
 
-1. **01 · models** — `db/models.py` (enums + tables; depends on nothing).
-2. **02 · defaults** — `config/defaults.py` in full (needs the enums for `DEFAULT_DEBOUNCE_BY_TYPE`).
-   → **Skip 01's "Task 0"** (its 2-function stub of the same file); it exists only for running 01
-   standalone.
-3. **01 · rest** — `crypto.py`, `session.py`, `schemas.py`, `repo.py` (repo uses `normalize_extension`).
-4. **02 · events + runtime** — `pipeline/events.py`, `config/runtime.py` (runtime uses `Repo`).
-5. **03 · servers**, **04 · watcher** — independent of each other; either order (or in parallel).
-6. **05 · pipeline** — needs 02 (events/runtime) + 03 (adapter ABC/`TriggerResult`).
-7. **06 · engine/cli** — needs everything.
+1. **01 · db&crypto** — `normalize.py` (leaf) → `db/{models,crypto,session,schemas,repo}.py`.
+   Schemas normalize via `normalize.py`; `repo` reuses the same functions. Self-contained.
+2. **02 · types&runtime** — `config/{defaults,runtime}.py` + `pipeline/events.py`.
+   `defaults.py` needs 01's enums; `runtime.py` needs 01's `Repo`; both reuse `normalize.py`.
+3. **03 · servers**, **04 · watcher** — independent of each other; either order (or in parallel).
+4. **05 · pipeline** — needs 02 (events/runtime) + 03 (adapter ABC/`TriggerResult`).
+5. **06 · engine/cli** — needs everything.
 
-Each numbered step is still a sequence of green-CI commits; the order only fixes *which plan's
-tasks run when* where two plans touch the same file.
+Each numbered step is a sequence of green-CI commits and maps 1:1 to a sub-plan; no sub-plan has
+to be split across another's tasks anymore.
 
 ## Reconciliation rulings (cross-plan, applied to the docs)
 
 These were resolved during the post-draft self-review and are already reflected in the plan files:
 
-1. **`config/defaults.py` is owned by sub-plan 02.** Sub-plan 01's "Task 0" is a standalone-only
-   stub and carries a SKIP banner for the canonical order above. Only 02 creates/extends the file.
+1. **Pure normalizers live in the leaf module `mediascanmonitor/normalize.py` (sub-plan 01),
+   not in `config/defaults.py`.** This is the post-review change that broke the old 01↔02 cycle:
+   `db` and `config` both depend *down* onto `normalize.py`; neither depends on the other for
+   normalization. `config/defaults.py` (presets + debounce defaults) stays owned by 02. Sub-plan
+   01's former "Task 0" defaults stub and its SKIP banner are removed.
 2. **`FakeWatcher` has one home: `mediascanmonitor/watcher/base.py` (sub-plan 04).** It is widened
    to a superset API (`set_roots`/`roots`/`roots_history`/`current_roots`/`feed`/`emit`/
    `close_stream`/`events`/`aclose`/`closed`) covering every test in sub-plans 05 and 06. Sub-plan

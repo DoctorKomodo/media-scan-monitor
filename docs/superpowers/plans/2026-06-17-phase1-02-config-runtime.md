@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the frozen domain event/request types (`pipeline/events.py`), the pure config defaults + path/extension normalizers (`config/defaults.py`), and the immutable runtime-config snapshot + builder (`config/runtime.py`) exactly as specified in the Phase 1 interface contract sections 5 and 6.
+**Goal:** Build the frozen domain event/request types (`pipeline/events.py`), the pure config defaults (`config/defaults.py` — constants only), and the immutable runtime-config snapshot + builder (`config/runtime.py`) exactly as specified in the Phase 1 interface contract sections 5 and 6.
 
-**Architecture:** Three small, single-responsibility modules. `config/defaults.py` is pure (constants + two normalizer functions) and has **no** dependency on the rest of this sub-plan — Task 1 builds it first so sub-plans 01 (DB repo) and 04 (watcher) can import `normalize_extension`/`normalize_path` from it. `pipeline/events.py` defines frozen slotted dataclasses for the event pipeline. `config/runtime.py` defines the frozen runtime dataclasses and `build_runtime_config(repo)`, which reads enabled servers/folders/filetypes from the `Repo`, decrypts secrets via `repo.resolve_secret`, normalizes paths, and assembles an immutable `RuntimeConfig`.
+**Architecture:** Three small, single-responsibility modules. `config/defaults.py` is pure constants (ignore-dirs, extension presets, debounce defaults); the path/extension **normalizers are NOT here** — they live in the leaf module `mediascanmonitor/normalize.py` owned by sub-plan 01 (contract §1.1), and this sub-plan imports them. `pipeline/events.py` defines frozen slotted dataclasses for the event pipeline. `config/runtime.py` defines the frozen runtime dataclasses and `build_runtime_config(repo)`, which reads enabled servers/folders/filetypes from the `Repo`, decrypts secrets via `repo.resolve_secret`, normalizes paths, and assembles an immutable `RuntimeConfig`.
 
 **Tech Stack:** Python ≥ 3.14, stdlib `dataclasses`/`enum`/`os`, `pydantic==2.13.4`/`sqlmodel==0.0.38` (only via the contract's `db/models.py` enums + table models, owned by sub-plan 01), `cryptography==49.0.0` (only indirectly, via the repo's `resolve_secret`). Tests use `pytest==9.1.0`. `mypy --strict` clean, `ruff` clean, line length 100, `from __future__ import annotations` in every module.
 
@@ -17,13 +17,14 @@ This sub-plan **owns** (defines) exactly these names, copied verbatim from the F
 
 - Section 5 — `pipeline/events.py`: `FsEventType`, `FsEvent`, `ScanRequest`.
 - Section 6 — `config/defaults.py`: `IGNORE_DIRS`, `EXTENSION_PRESETS`,
-  `DEFAULT_DEBOUNCE_WINDOW_SECONDS`, `DEFAULT_DEBOUNCE_BY_TYPE`, `normalize_extension`,
-  `normalize_path`.
+  `DEFAULT_DEBOUNCE_WINDOW_SECONDS`, `DEFAULT_DEBOUNCE_BY_TYPE` (constants only).
 - Section 6 — `config/runtime.py`: `ServerRuntime`, `FolderRoute`, `RuntimeConfig`,
   `build_runtime_config`.
 
 This sub-plan **consumes** (imports, never redefines) these names owned by **sub-plan 01**:
 
+- Section 1.1 normalizers from `mediascanmonitor/normalize.py`: `normalize_extension`,
+  `normalize_path` (leaf module; `config/defaults.py` and `config/runtime.py` import them).
 - Section 1 enums from `mediascanmonitor/db/models.py`: `ServerType`, `ScanMode`, `DebounceMode`.
 - Section 2 table models from `mediascanmonitor/db/models.py`: `Server`, `Folder`, `FileType`.
 - Section 4 repository from `mediascanmonitor/db/repo.py`: `Repo` (only its method signatures
@@ -31,14 +32,16 @@ This sub-plan **consumes** (imports, never redefines) these names owned by **sub
 
 **Dependency note:** the contract's forward-only order is `01 → 02`. Sub-plan 01 (DB & crypto)
 must be merged before this sub-plan, because every module here imports the enums/models from
-`db/models.py`, and `config/runtime.py` type-references `db/repo.py:Repo`. Do not start this
-sub-plan until `mediascanmonitor/db/models.py` exists with the section-1 enums and section-2
-models, and `mediascanmonitor/db/repo.py` exists with the section-4 `Repo` class.
+`db/models.py`, `config/defaults.py` + `config/runtime.py` import the normalizers from
+`mediascanmonitor/normalize.py`, and `config/runtime.py` type-references `db/repo.py:Repo`. Do
+not start this sub-plan until `mediascanmonitor/normalize.py` (section 1.1 normalizers),
+`mediascanmonitor/db/models.py` (section-1 enums + section-2 models), and
+`mediascanmonitor/db/repo.py` (section-4 `Repo`) exist.
 
 ### Cross-plan invariants honored here
 
 - **Invariant 1 — empty extension set means "all":** a folder with no `FileType` rows produces
-  `FolderRoute.extensions == frozenset()`. Encoded by Task 7's "empty → all" test; the *matching*
+  `FolderRoute.extensions == frozenset()`. Encoded by Task 5's "empty → all" test; the *matching*
   semantics live in sub-plan 05.
 - **Invariant 3 — secrets:** plaintext appears only inside `ServerRuntime.secret` (in memory),
   sourced from `repo.resolve_secret`. Never logged, never stored.
@@ -73,21 +76,25 @@ into `ServerRuntime.secret`, which the stub verifies faithfully.
 
 | File | Responsibility | Created by |
 |---|---|---|
-| `mediascanmonitor/config/defaults.py` | Ignore-dir set, extension presets, debounce defaults, `normalize_extension`, `normalize_path` (all pure) | Tasks 1–3 |
-| `mediascanmonitor/pipeline/events.py` | `FsEventType`, `FsEvent`, `ScanRequest` frozen slotted dataclasses | Task 4 |
-| `mediascanmonitor/config/runtime.py` | `ServerRuntime`, `FolderRoute`, `RuntimeConfig` frozen dataclasses + `build_runtime_config` | Tasks 5–7 |
+| `mediascanmonitor/config/defaults.py` | Ignore-dir set, extension presets, debounce defaults (pure constants; normalizers live in `normalize.py`, sub-plan 01) | Task 1 |
+| `mediascanmonitor/pipeline/events.py` | `FsEventType`, `FsEvent`, `ScanRequest` frozen slotted dataclasses | Task 2 |
+| `mediascanmonitor/config/runtime.py` | `ServerRuntime`, `FolderRoute`, `RuntimeConfig` frozen dataclasses + `build_runtime_config` | Tasks 3–4 |
 | `tests/config/__init__.py` | test-package marker | Task 1 |
-| `tests/config/test_defaults.py` | normalizer + constants tests | Tasks 1–3 |
-| `tests/pipeline/__init__.py` | test-package marker | Task 4 |
-| `tests/pipeline/test_events.py` | event/request dataclass tests | Task 4 |
-| `tests/config/test_runtime.py` | runtime dataclass + `build_runtime_config` tests (incl. `FakeRepo`) | Tasks 5–7 |
+| `tests/config/test_defaults.py` | constants tests | Task 1 |
+| `tests/pipeline/__init__.py` | test-package marker | Task 2 |
+| `tests/pipeline/test_events.py` | event/request dataclass tests | Task 2 |
+| `tests/config/test_runtime.py` | runtime dataclass + `build_runtime_config` tests (incl. `FakeRepo`) | Tasks 3–5 |
 
 The package directories `mediascanmonitor/config/`, `mediascanmonitor/pipeline/`, and the test
 roots already exist (Phase 0 skeleton); `tests/config/` and `tests/pipeline/` are new.
 
 ---
 
-## Task 1: `normalize_extension` (pure)
+## Task 1: `config/defaults.py` — pure constants
+
+Constants only (ignore-dirs, extension presets, debounce defaults). The path/extension
+normalizers are **not** here — they live in `mediascanmonitor/normalize.py` (sub-plan 01,
+already merged) and are imported where needed.
 
 **Files:**
 - Create: `mediascanmonitor/config/defaults.py`
@@ -107,163 +114,10 @@ Create `tests/config/__init__.py` with a single line:
 Create `tests/config/test_defaults.py`:
 
 ```python
-"""Tests for config/defaults.py — pure constants and normalizers."""
+"""Tests for config/defaults.py — pure constants."""
 
 from __future__ import annotations
 
-import pytest
-from mediascanmonitor.config.defaults import normalize_extension
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("mkv", "mkv"),
-        ("MKV", "mkv"),
-        (".srt", "srt"),
-        (".SRT", "srt"),
-        ("  mp4  ", "mp4"),
-        ("  .MP4 ", "mp4"),
-        ("..ass", "ass"),
-        ("tar.gz", "tar.gz"),
-        ("", ""),
-        (" . ", ""),
-    ],
-)
-def test_normalize_extension(raw: str, expected: str) -> None:
-    assert normalize_extension(raw) == expected
-```
-
-- [ ] **Step 3: Run test to verify it fails**
-
-Run: `pytest tests/config/test_defaults.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'mediascanmonitor.config.defaults'`
-(or `ImportError: cannot import name 'normalize_extension'`).
-
-- [ ] **Step 4: Write minimal implementation**
-
-Create `mediascanmonitor/config/defaults.py`:
-
-```python
-"""Pure config defaults and normalizers.
-
-This module has no dependencies on the rest of sub-plan 02 and is imported by
-sub-plans 01 (DB repo) and 04 (watcher) as well. Keep it import-light and pure.
-"""
-
-from __future__ import annotations
-
-
-def normalize_extension(ext: str) -> str:
-    """Normalize a file extension: strip surrounding whitespace, drop any leading
-    dot(s), and lowercase. ``" .MP4 "`` -> ``"mp4"``; ``""`` -> ``""``."""
-    return ext.strip().lstrip(".").lower()
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `pytest tests/config/test_defaults.py -v`
-Expected: PASS (10 parametrized cases pass).
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add mediascanmonitor/config/defaults.py tests/config/__init__.py tests/config/test_defaults.py
-git commit -m "feat(config): add normalize_extension"
-```
-
----
-
-## Task 2: `normalize_path` (pure)
-
-**Files:**
-- Modify: `mediascanmonitor/config/defaults.py`
-- Modify: `tests/config/test_defaults.py`
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `tests/config/test_defaults.py`:
-
-```python
-import os
-
-from mediascanmonitor.config.defaults import normalize_path
-
-
-def test_normalize_path_strips_trailing_slash() -> None:
-    assert normalize_path("/data/media/tvseries/") == "/data/media/tvseries"
-
-
-def test_normalize_path_no_trailing_slash_unchanged() -> None:
-    assert normalize_path("/data/media/tvseries") == "/data/media/tvseries"
-
-
-def test_normalize_path_root_preserved() -> None:
-    assert normalize_path("/") == "/"
-
-
-def test_normalize_path_collapses_double_slashes_and_dotdot() -> None:
-    assert normalize_path("/data//media/../media/tv/") == "/data/media/tv"
-
-
-def test_normalize_path_strips_surrounding_whitespace() -> None:
-    assert normalize_path("  /data/media  ") == "/data/media"
-
-
-def test_normalize_path_relative_becomes_absolute() -> None:
-    result = normalize_path("relative/sub")
-    assert os.path.isabs(result)
-    assert result.endswith("/relative/sub")
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pytest tests/config/test_defaults.py -k normalize_path -v`
-Expected: FAIL — `ImportError: cannot import name 'normalize_path'`.
-
-- [ ] **Step 3: Write minimal implementation**
-
-Add to `mediascanmonitor/config/defaults.py` (add `import os` under `from __future__` line,
-then append the function):
-
-```python
-import os
-```
-
-```python
-def normalize_path(path: str) -> str:
-    """Normalize a filesystem path to an absolute path with no trailing slash
-    (except root ``"/"``). Collapses ``//``, ``.``, and ``..`` segments. Relative
-    inputs are resolved against the current working directory. Symlinks are NOT
-    resolved (use of ``abspath``, not ``realpath``)."""
-    return os.path.abspath(path.strip())
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pytest tests/config/test_defaults.py -k normalize_path -v`
-Expected: PASS (6 tests).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add mediascanmonitor/config/defaults.py tests/config/test_defaults.py
-git commit -m "feat(config): add normalize_path"
-```
-
----
-
-## Task 3: Default constants (`IGNORE_DIRS`, presets, debounce defaults)
-
-**Files:**
-- Modify: `mediascanmonitor/config/defaults.py`
-- Modify: `tests/config/test_defaults.py`
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `tests/config/test_defaults.py`:
-
-```python
 from mediascanmonitor.config.defaults import (
     DEFAULT_DEBOUNCE_BY_TYPE,
     DEFAULT_DEBOUNCE_WINDOW_SECONDS,
@@ -312,21 +166,27 @@ def test_default_debounce_by_type_values() -> None:
     assert DEFAULT_DEBOUNCE_BY_TYPE[ServerType.audiobookshelf] == DebounceMode.trailing
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
-Run: `pytest tests/config/test_defaults.py -k "ignore_dirs or debounce or presets" -v`
-Expected: FAIL — `ImportError: cannot import name 'IGNORE_DIRS'`.
+Run: `pytest tests/config/test_defaults.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'mediascanmonitor.config.defaults'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 4: Write minimal implementation**
 
-Add to `mediascanmonitor/config/defaults.py`. Add the import of the enums after `import os`,
-then append the constants:
+Create `mediascanmonitor/config/defaults.py`:
 
 ```python
+"""Pure config defaults: ignore-dirs, extension presets, per-type debounce policy.
+
+Constants only — the path/extension normalizers live in the leaf module
+`mediascanmonitor.normalize` (sub-plan 01). This module imports the enums from
+`db.models` and nothing else from the package; keep it import-light and pure.
+"""
+
+from __future__ import annotations
+
 from mediascanmonitor.db.models import DebounceMode, ServerType
-```
 
-```python
 # Synology (and similar NAS) system directories that must never trigger a scan.
 IGNORE_DIRS: frozenset[str] = frozenset({"@eaDir", "#snapshot", "#recycle", "@tmp"})
 
@@ -351,21 +211,21 @@ DEFAULT_DEBOUNCE_BY_TYPE: dict[ServerType, DebounceMode] = {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `pytest tests/config/test_defaults.py -v`
-Expected: PASS (all defaults tests, including the normalizer tests from Tasks 1–2).
+Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add mediascanmonitor/config/defaults.py tests/config/test_defaults.py
+git add mediascanmonitor/config/defaults.py tests/config/__init__.py tests/config/test_defaults.py
 git commit -m "feat(config): add ignore-dirs, extension presets, debounce defaults"
 ```
 
 ---
 
-## Task 4: `pipeline/events.py` — `FsEventType`, `FsEvent`, `ScanRequest`
+## Task 2: `pipeline/events.py` — `FsEventType`, `FsEvent`, `ScanRequest`
 
 **Files:**
 - Create: `mediascanmonitor/pipeline/events.py`
@@ -556,7 +416,7 @@ git commit -m "feat(pipeline): add FsEvent, FsEventType, ScanRequest domain type
 
 ---
 
-## Task 5: `config/runtime.py` — runtime dataclasses
+## Task 3: `config/runtime.py` — runtime dataclasses
 
 **Files:**
 - Create: `mediascanmonitor/config/runtime.py`
@@ -601,6 +461,27 @@ def test_server_runtime_fields_frozen_slotted() -> None:
     assert not hasattr(sr, "__dict__")
     with pytest.raises(dataclasses.FrozenInstanceError):
         sr.secret = "leak"  # type: ignore[misc]
+
+
+def test_server_runtime_secret_excluded_from_repr() -> None:
+    sr = ServerRuntime(
+        server_id=1,
+        name="plex-main",
+        type=ServerType.plex,
+        base_url="",
+        verify_tls=True,
+        timeout_seconds=10.0,
+        secret="super-secret-token",
+        scan_mode=ScanMode.targeted,
+        debounce_mode=DebounceMode.trailing,
+        debounce_window_seconds=30,
+        retry_attempts=3,
+        webhook_method=None,
+        webhook_headers_json=None,
+        webhook_body_template=None,
+    )
+    assert "super-secret-token" not in repr(sr)  # invariant 3: never in a repr
+    assert sr.secret == "super-secret-token"      # still reachable by attribute
 
 
 def test_folder_route_fields_frozen_slotted() -> None:
@@ -667,7 +548,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'mediascanmonitor.confi
 - [ ] **Step 3: Write minimal implementation**
 
 Create `mediascanmonitor/config/runtime.py` (dataclasses verbatim from contract section 6;
-`build_runtime_config` body is added in Task 6):
+`build_runtime_config` body is added in Task 4):
 
 ```python
 """Immutable runtime configuration snapshot, assembled from the DB.
@@ -678,7 +559,7 @@ into ``ServerRuntime.secret`` here (in memory only) — adapters receive plainte
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
@@ -695,7 +576,7 @@ class ServerRuntime:
     base_url: str
     verify_tls: bool
     timeout_seconds: float
-    secret: str | None         # decrypted
+    secret: str | None = field(repr=False)   # decrypted plaintext; excluded from repr (invariant 3)
     scan_mode: ScanMode
     debounce_mode: DebounceMode
     debounce_window_seconds: int
@@ -725,8 +606,8 @@ class RuntimeConfig:
 
 Note: the `if TYPE_CHECKING` import of `Repo` and the use of `DebounceMode`/`ScanMode`/
 `ServerType` are wired in this step so the module is import-clean; `build_runtime_config`
-(which uses `Repo`) lands in Task 6. To keep `ruff` happy in the interim (the `Repo` import and
-the unused enum imports), Task 6 follows immediately — do not run `ruff` between Tasks 5 and 6.
+(which uses `Repo`) lands in Task 4. To keep `ruff` happy in the interim (the `Repo` import and
+the unused enum imports), Task 4 follows immediately — do not run `ruff` between Tasks 3 and 4.
 `mypy` is fine because `TYPE_CHECKING` imports are allowed to be "unused" at runtime.
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -743,7 +624,7 @@ git commit -m "feat(config): add ServerRuntime, FolderRoute, RuntimeConfig datac
 
 ---
 
-## Task 6: `build_runtime_config` — happy path + `FakeRepo`
+## Task 4: `build_runtime_config` — happy path + `FakeRepo`
 
 **Files:**
 - Modify: `mediascanmonitor/config/runtime.py`
@@ -884,16 +765,13 @@ Expected: FAIL — `ImportError: cannot import name 'build_runtime_config'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add to `mediascanmonitor/config/runtime.py`. First extend the imports at the top to pull in the
-normalizers and ignore-dirs from `config/defaults.py` (place after the existing
-`from mediascanmonitor.db.models import ...` line):
+Add to `mediascanmonitor/config/runtime.py`. First extend the imports at the top to pull in
+`IGNORE_DIRS` from `config/defaults.py` and the normalizers from the `normalize` leaf module
+(place after the existing `from mediascanmonitor.db.models import ...` line):
 
 ```python
-from mediascanmonitor.config.defaults import (
-    IGNORE_DIRS,
-    normalize_extension,
-    normalize_path,
-)
+from mediascanmonitor.config.defaults import IGNORE_DIRS
+from mediascanmonitor.normalize import normalize_extension, normalize_path
 ```
 
 Then append the builder at the end of the module:
@@ -965,12 +843,12 @@ git commit -m "feat(config): add build_runtime_config builder (happy path)"
 
 ---
 
-## Task 7: `build_runtime_config` — exclusion, dedup, empty=all, multi-server
+## Task 5: `build_runtime_config` — exclusion, dedup, empty=all, multi-server
 
 **Files:**
 - Modify: `tests/config/test_runtime.py`
 
-These behaviors are already implemented by Task 6's builder; this task pins them with tests.
+These behaviors are already implemented by Task 4's builder; this task pins them with tests.
 (If any test fails, the builder — not the test — is wrong; fix `config/runtime.py`.)
 
 - [ ] **Step 1: Write the failing tests**
@@ -1063,10 +941,10 @@ def test_empty_repo_yields_empty_config() -> None:
 - [ ] **Step 2: Run tests to verify they pass**
 
 Run: `pytest tests/config/test_runtime.py -v`
-Expected: PASS (all runtime tests — the Task 6 happy path plus the 6 new tests).
+Expected: PASS (all runtime tests — the Task 4 happy path plus the 6 new tests).
 
 If `test_empty_filetypes_means_all_extensions` or any dedup/exclusion test FAILS, the builder is
-wrong — re-read Task 6's implementation and fix `config/runtime.py` (do not weaken the test).
+wrong — re-read Task 4's implementation and fix `config/runtime.py` (do not weaken the test).
 
 - [ ] **Step 3: Commit**
 
@@ -1077,7 +955,7 @@ git commit -m "test(config): pin exclusion, dedup, empty=all, multi-server runti
 
 ---
 
-## Task 8: Full quality gate (ruff + mypy --strict + pytest)
+## Task 6: Full quality gate (ruff + mypy --strict + pytest)
 
 **Files:** none changed unless a check fails.
 
@@ -1109,7 +987,7 @@ in `runtime.py`.
 - [ ] **Step 4: Run the full sub-plan test suite**
 
 Run: `pytest tests/config tests/pipeline -v`
-Expected: PASS — all tests from Tasks 1–7 (defaults, events, runtime).
+Expected: PASS — all tests from Tasks 1–5 (defaults, events, runtime).
 
 - [ ] **Step 5: Run the entire repository test suite (no regressions)**
 
@@ -1133,43 +1011,44 @@ git commit -m "chore(config,pipeline): ruff + mypy --strict clean for sub-plan 0
 
 | Spec item | Task |
 |---|---|
-| `FsEventType` enum (4 values) | Task 4 |
-| `FsEvent` frozen slotted dataclass | Task 4 |
-| `ScanRequest` frozen slotted dataclass | Task 4 |
-| `IGNORE_DIRS` (`@eaDir`, `#snapshot`, `#recycle`, `@tmp`) | Task 3 |
-| `EXTENSION_PRESETS` (video/subtitles/audio) | Task 3 |
-| `DEFAULT_DEBOUNCE_WINDOW_SECONDS = 30` | Task 3 |
-| `DEFAULT_DEBOUNCE_BY_TYPE` (media=trailing, webhook=off) | Task 3 |
-| `normalize_extension` (dot/case/whitespace) | Task 1 |
-| `normalize_path` (absolute, no trailing slash, root, relative) | Task 2 |
-| `ServerRuntime` frozen slotted dataclass | Task 5 |
-| `FolderRoute` frozen slotted dataclass | Task 5 |
-| `RuntimeConfig` frozen slotted dataclass | Task 5 |
-| `build_runtime_config` reads enabled servers/folders/filetypes | Tasks 6, 7 |
-| disabled servers/folders excluded | Task 7 |
-| `watch_paths` deduplicated union | Task 7 |
-| one `FolderRoute` per enabled (server, folder) | Tasks 6, 7 |
-| extensions frozenset of normalized; empty → empty (all) | Tasks 6, 7 |
-| `servers` keyed by id; secret decrypted via `resolve_secret` | Tasks 6, 7 |
-| `ignore_dirs` from `IGNORE_DIRS` | Task 6 |
-| paths normalized via `normalize_path` (invariant 4) | Tasks 6, 7 |
-| secrets only in `ServerRuntime.secret` (invariant 3) | Tasks 6, 7 |
-| mypy --strict + ruff clean | Task 8 |
+| `IGNORE_DIRS` (`@eaDir`, `#snapshot`, `#recycle`, `@tmp`) | Task 1 |
+| `EXTENSION_PRESETS` (video/subtitles/audio) | Task 1 |
+| `DEFAULT_DEBOUNCE_WINDOW_SECONDS = 30` | Task 1 |
+| `DEFAULT_DEBOUNCE_BY_TYPE` (media=trailing, webhook=off) | Task 1 |
+| `FsEventType` enum (4 values) | Task 2 |
+| `FsEvent` frozen slotted dataclass | Task 2 |
+| `ScanRequest` frozen slotted dataclass | Task 2 |
+| `ServerRuntime` frozen slotted dataclass (`secret` excluded from repr) | Task 3 |
+| `FolderRoute` frozen slotted dataclass | Task 3 |
+| `RuntimeConfig` frozen slotted dataclass | Task 3 |
+| `build_runtime_config` reads enabled servers/folders/filetypes | Tasks 4, 5 |
+| disabled servers/folders excluded | Task 5 |
+| `watch_paths` deduplicated union | Task 5 |
+| one `FolderRoute` per enabled (server, folder) | Tasks 4, 5 |
+| extensions frozenset of normalized; empty → empty (all) | Tasks 4, 5 |
+| `servers` keyed by id; secret decrypted via `resolve_secret` | Tasks 4, 5 |
+| `ignore_dirs` from `IGNORE_DIRS` | Task 4 |
+| paths normalized via `normalize_path` (invariant 4) | Tasks 4, 5 |
+| secrets only in `ServerRuntime.secret`, not in repr (invariant 3) | Tasks 3, 4, 5 |
+| mypy --strict + ruff clean | Task 6 |
 
-No gaps. Items explicitly **out of scope** (other sub-plans): extension *matching* semantics
+`normalize_extension` / `normalize_path` are **not** in this table — they are owned by sub-plan
+01 (`mediascanmonitor/normalize.py`, contract §1.1) and tested there; this sub-plan only imports
+them. No gaps. Items explicitly **out of scope** (other sub-plans): extension *matching* semantics
 (`extension_matches`, sub-plan 05), the `scan_key` derivation in `route()` (invariant 2,
 sub-plan 05), prefix matching (invariant 5, sub-plan 05), failure isolation (invariant 6,
-sub-plan 05/06). The `ScanRequest.scan_key` *field* is defined here (Task 4); it is *populated*
+sub-plan 05/06). The `ScanRequest.scan_key` *field* is defined here (Task 2); it is *populated*
 by the router in sub-plan 05.
 
 **2. Placeholder scan:** No "TBD/TODO/implement later". Every code step shows complete code; every
 test step shows complete test code; every run step shows the exact command and expected output.
 
 **3. Type consistency:**
-- `normalize_extension` / `normalize_path` — same names in defaults.py (Tasks 1–2) and as used
-  in runtime.py (Task 6). ✓
-- `ServerRuntime` / `FolderRoute` / `RuntimeConfig` field names match the contract verbatim and
-  are used consistently in Tasks 5–7. ✓
+- `normalize_extension` / `normalize_path` are imported from `mediascanmonitor.normalize`
+  (sub-plan 01) in both `config/defaults.py`'s consumers and `runtime.py` (Task 4) — one
+  definition, never redefined here. ✓
+- `ServerRuntime` / `FolderRoute` / `RuntimeConfig` field names match the contract verbatim
+  (incl. `secret: str | None = field(repr=False)`) and are used consistently in Tasks 3–5. ✓
 - `FakeRepo` methods (`list_servers`, `list_folders`, `resolve_secret`) match the section-4 `Repo`
   signatures the builder calls. ✓
 - `make_server` / `make_folder` helper signatures match the model fields from contract section 2
@@ -1178,7 +1057,7 @@ test step shows complete test code; every run step shows the exact command and e
 - `build_runtime_config(repo: Repo)` signature is verbatim from the contract; tests pass
   `cast("Repo", FakeRepo(...))`. ✓
 
-One note carried into execution: Tasks 5→6 leave `runtime.py` momentarily importing `Repo` (under
+One note carried into execution: Tasks 3→4 leave `runtime.py` momentarily importing `Repo` (under
 `TYPE_CHECKING`) and the enums before the builder uses them. This is mypy-clean
-(`TYPE_CHECKING` imports may be runtime-unused) and the Task 5 note instructs running `ruff` only
-after Task 6. No fix needed beyond that sequencing note.
+(`TYPE_CHECKING` imports may be runtime-unused) and the Task 3 note instructs running `ruff` only
+after Task 4. No fix needed beyond that sequencing note.

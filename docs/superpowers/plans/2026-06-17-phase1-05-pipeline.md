@@ -56,6 +56,8 @@ recent** matching event, carrying the **most recent** `ScanRequest`. This matche
 ("collapse a burst … into a single trigger **after the folder settles**") and the contract's
 "(re)arm timer for window seconds". `off` bypasses the debouncer entirely (await dispatch
 immediately). `aclose()` **cancels and drops** all pending timers (deterministic; no flush).
+`update_servers()` (called by `Engine.rebuild`, contract §9/§10) swaps the per-server policy map
+in place, cancelling pending timers for servers that were removed and leaving survivors armed.
 
 **File structure produced by this plan:**
 
@@ -770,6 +772,28 @@ async def test_unknown_server_falls_back_to_immediate_dispatch() -> None:
     await debouncer.submit(_req(99, "/data/tv/Show"))
     assert len(recorder.calls) == 1      # fail-open: deliver rather than silently drop
     await debouncer.aclose()
+
+
+async def test_update_servers_drops_timers_for_removed_servers() -> None:
+    # Engine.rebuild swaps the server map in place; a removed server's pending timer is dropped.
+    servers = {
+        1: make_server_runtime(server_id=1, debounce_mode=DebounceMode.trailing,
+                               debounce_window_seconds=30),
+        2: make_server_runtime(server_id=2, debounce_mode=DebounceMode.trailing,
+                               debounce_window_seconds=30),
+    }
+    recorder = Recorder()
+    clock = ManualClock()
+    debouncer = Debouncer(recorder, servers, sleep=clock.sleep)
+
+    await debouncer.submit(_req(1, "/data/tv/ShowA"))
+    await debouncer.submit(_req(2, "/data/tv/ShowB"))
+
+    debouncer.update_servers({1: servers[1]})   # server 2 removed on rebuild
+    await clock.advance(30)
+
+    assert {r.server_id for r in recorder.calls} == {1}  # server 2's timer cancelled, not fired
+    await debouncer.aclose()
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
@@ -831,6 +855,20 @@ class Debouncer:
             pending.cancel()
         self._timers[key] = asyncio.create_task(self._fire_after(key, req, window))
 
+    def update_servers(self, servers: dict[int, ServerRuntime]) -> None:
+        """Swap the per-server policy map in place on ``Engine.rebuild`` (contract §9/§10),
+        keeping this Debouncer instance and its pending timers. A pending
+        ``(server_id, scan_key)`` whose server is **gone** from ``servers`` is cancelled (the
+        server was disabled/deleted — do not dispatch). Survivors keep their armed timer; the
+        new window length is read only when a key next (re)arms, not retroactively.
+        """
+        self._servers = servers
+        for key in list(self._timers):
+            if key[0] not in servers:
+                task = self._timers.pop(key, None)
+                if task is not None:
+                    task.cancel()
+
     async def _fire_after(self, key: tuple[int, str], req: ScanRequest, window: float) -> None:
         try:
             await self._sleep(window)
@@ -858,7 +896,7 @@ class Debouncer:
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `pytest tests/pipeline/test_debounce.py -v`
-Expected: `6 passed`.
+Expected: `7 passed`.
 
 - [ ] **Step 6: Lint and type-check**
 
@@ -1072,7 +1110,7 @@ Confirm the whole pipeline sub-package is green, typed, and lint-clean together.
 - [ ] **Step 1: Run the full pipeline test suite**
 
 Run: `pytest tests/pipeline/ -v`
-Expected: `35 passed` (12 filters + 13 router + 6 debounce + 4 dispatcher).
+Expected: `36 passed` (12 filters + 13 router + 7 debounce + 4 dispatcher).
 
 - [ ] **Step 2: Type-check the whole package**
 
@@ -1113,6 +1151,7 @@ git commit -m "test(pipeline): verify full pipeline suite, types, and lint clean
 | Prefix correctness (`/a/bc` not matched by `/a/b`) | Task 3 (invariant 5) |
 | Targeted vs library `scan_key` (`lib:{id}`), library `scan_path=None` | Task 3 (invariant 2) |
 | `Debouncer` off ⇒ immediate; trailing ⇒ coalesce; injectable sleep; `aclose` | Task 4 |
+| `Debouncer.update_servers` (rebuild swap; drop removed-server timers) | Task 4 (contract §9/§10) |
 | Burst → one dispatch; independent keys; window reset; `aclose` deterministic | Task 4 (risk #5) |
 | Fake-clock helper full code | Task 4 (`tests/pipeline/clock.py`) |
 | `Dispatcher` lookup, exception isolation (never raises), `set_adapters` | Task 5 (invariant 6) |
@@ -1126,8 +1165,8 @@ fields (`server_id, server_name, scan_mode, scan_path, library_id, scan_key, eve
 file_path, top_folder`), `FolderRoute` fields (`server_id, server_name, path, extensions,
 library_id, scan_mode`), `ServerRuntime` fields (incl. `type`, `debounce_mode`,
 `debounce_window_seconds`), `RuntimeConfig` (`watch_paths, routes, servers, ignore_dirs`),
-`TriggerResult(ok, status_code, detail)`, `ServerAdapter.trigger/test`. `Debouncer.__init__`
-signature and `Dispatcher.dispatch/set_adapters` match §9 verbatim. ✓
+`TriggerResult(ok, status_code, detail)`, `ServerAdapter.trigger/test`. `Debouncer.__init__`,
+`Debouncer.update_servers`, and `Dispatcher.dispatch/set_adapters` match §9 verbatim. ✓
 
 **Contract deviations:** none. Two contract-permitted choices were *resolved* (not changed):
 trailing = reset-on-each-event; `aclose` = cancel-and-drop. Both are documented above and
