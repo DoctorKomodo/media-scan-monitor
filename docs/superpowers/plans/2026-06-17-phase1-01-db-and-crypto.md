@@ -288,22 +288,34 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'mediascanmonitor.db.mo
 
 Create `mediascanmonitor/db/models.py` (reproduce the frozen contract verbatim):
 
+> **No `from __future__ import annotations` in this module** (the single exception to the
+> project-wide convention — contract §0/§2). SQLModel 0.0.38 configures relationships from the
+> *evaluated* annotation; under PEP 563 a `list["Folder"]` relationship annotation reaches
+> SQLAlchemy as the raw string `"list['Folder']"` and mapper configuration raises
+> `InvalidRequestError` on first instantiation (`Mapped[...]` and explicit `argument=` both also
+> fail under sqlmodel 0.0.38 + Python 3.14). Enums subclass `StrEnum` (satisfies `ruff` `UP042`,
+> behaviorally equivalent). The two forward-ref relationship lines carry `# noqa: UP037` because
+> removing those quotes would `NameError` at class-definition time.
+
 ```python
 """SQLModel persistence models and enums (frozen interface contract, sections 1-2).
 
 `FileType` is its own table so the `Server >- Folder >- FileType` cascade delete can be
 tested explicitly. Secrets live only as Fernet ciphertext in `Server.secret_encrypted`;
 plaintext never touches a model field.
+
+This module intentionally omits ``from __future__ import annotations``: SQLModel 0.0.38 reads
+relationship targets from the evaluated annotation, and PEP 563 would hand SQLAlchemy the raw
+string ``"list['Folder']"`` instead of the class, breaking mapper configuration. Forward
+references are therefore quoted explicitly and carry ``# noqa: UP037``.
 """
 
-from __future__ import annotations
-
-from enum import Enum
+from enum import StrEnum
 
 from sqlmodel import Field, Relationship, SQLModel
 
 
-class ServerType(str, Enum):
+class ServerType(StrEnum):
     webhook = "webhook"
     plex = "plex"
     emby = "emby"
@@ -311,12 +323,12 @@ class ServerType(str, Enum):
     audiobookshelf = "audiobookshelf"
 
 
-class ScanMode(str, Enum):
+class ScanMode(StrEnum):
     targeted = "targeted"   # backend scans a specific folder path (Plex ?path=)
     library = "library"     # backend refreshes a whole library id
 
 
-class DebounceMode(str, Enum):
+class DebounceMode(StrEnum):
     off = "off"             # dispatch every matching event
     trailing = "trailing"   # collapse a burst per (server_id, scan_key) after a window
 
@@ -338,7 +350,7 @@ class Server(SQLModel, table=True):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
-    folders: list["Folder"] = Relationship(
+    folders: list["Folder"] = Relationship(  # noqa: UP037  forward ref; quote required (no PEP 563)
         back_populates="server",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -351,7 +363,7 @@ class Folder(SQLModel, table=True):
     library_id: str | None = None              # backend section/library id; None for webhook
     enabled: bool = True
     server: Server = Relationship(back_populates="folders")
-    filetypes: list["FileType"] = Relationship(
+    filetypes: list["FileType"] = Relationship(  # noqa: UP037  forward ref; quote required
         back_populates="folder",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
