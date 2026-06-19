@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-from mediascanmonitor.db.models import Setting
-from mediascanmonitor.db.session import init_db, resolve_db_path, session_factory
+import pytest
 from sqlalchemy import inspect
 from sqlmodel import SQLModel
+
+from mediascanmonitor.db.models import Setting
+from mediascanmonitor.db.session import init_db, resolve_db_path, session_factory
 
 
 def test_init_db_creates_all_tables(tmp_path: Path) -> None:
@@ -30,7 +32,9 @@ def test_migrations_match_models(tmp_path: Path) -> None:
 
     engine = init_db(tmp_path / "app.db")
     with engine.connect() as conn:
-        ctx = MigrationContext.configure(conn)
+        # compare_type=True mirrors env.py so the guard also catches column-type drift,
+        # not just added/dropped tables and columns.
+        ctx = MigrationContext.configure(conn, opts={"compare_type": True})
         diff = compare_metadata(ctx, SQLModel.metadata)
     assert diff == [], f"migrations drifted from models: {diff}"
 
@@ -45,7 +49,7 @@ def test_session_factory_shares_engine_state(tmp_path: Path) -> None:
         assert reader.get(Setting, "k") is not None
 
 
-def test_resolve_db_path_precedence(tmp_path: Path, monkeypatch) -> None:
+def test_resolve_db_path_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     explicit = tmp_path / "explicit.db"
     assert resolve_db_path(explicit) == explicit
 

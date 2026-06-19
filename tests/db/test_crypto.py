@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
+
 from mediascanmonitor.db.crypto import (
     SecretBox,
     SecretDecryptError,

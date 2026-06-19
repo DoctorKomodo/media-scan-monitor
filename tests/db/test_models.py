@@ -1,5 +1,9 @@
 """Tests for the SQLModel tables and enums (contract sections 1-2)."""
 
+from sqlalchemy import Engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
 from mediascanmonitor.db.models import (
     DebounceMode,
     FileType,
@@ -9,9 +13,6 @@ from mediascanmonitor.db.models import (
     ServerType,
     Setting,
 )
-from sqlalchemy import Engine
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
 
 
 def _memory_engine() -> Engine:

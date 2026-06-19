@@ -69,6 +69,12 @@ select = [
     "RUF", # ruff-specific
 ]
 
+[tool.ruff.lint.isort]
+# The package is installed editable, so ruff otherwise classifies it as third-party and
+# alphabetizes it in with real third-party imports. Pin it first-party so imports group
+# conventionally (stdlib / third-party / first-party).
+known-first-party = ["mediascanmonitor"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B"]
 
