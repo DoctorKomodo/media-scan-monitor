@@ -339,6 +339,10 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   count, per-server health/latency), extension presets, optional auth hardening, README
   rewrite, repo/image rename, image smoke test.
 
+> **Carried-over work:** cross-phase items deferred from the phase that surfaced them are tracked
+> in [`docs/FOLLOWUPS.md`](FOLLOWUPS.md) (a scannable index; detail stays in the sub-plans).
+> Check it when starting a phase.
+
 ---
 
 ## Verification

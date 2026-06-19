@@ -55,6 +55,8 @@ These override default behavior and apply to every change in this repo.
    for paths that otherwise fail silently.
 9. **Process & docs.** Small, single-purpose PRs aligned to the phases below. Keep `README.md`
    and this file in sync with reality. Document each backend's API quirks beside its adapter.
+   When you defer work to a later phase, add a one-line pointer to
+   [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) (detail stays in the plan/contract); remove it when done.
 
 ---
 
