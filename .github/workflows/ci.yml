@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0   # exact tag — setup-uv has no bare `v8` moving tag
         with:
           version: "0.11.21"        # pinned (verified); keep in sync with the dev box
           python-version: "3.14"
