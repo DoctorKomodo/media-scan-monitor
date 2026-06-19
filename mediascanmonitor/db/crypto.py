@@ -5,8 +5,6 @@ precedence env_key > file at path > generate-and-write (chmod 0600). The plainte
 secret only ever exists transiently inside `encrypt`/`decrypt`.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 

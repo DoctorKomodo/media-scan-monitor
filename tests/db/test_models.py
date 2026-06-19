@@ -1,7 +1,5 @@
 """Tests for the SQLModel tables and enums (contract sections 1-2)."""
 
-from __future__ import annotations
-
 from mediascanmonitor.db.models import (
     DebounceMode,
     FileType,

@@ -5,8 +5,6 @@ start the engine (and, unless ``--no-web`` is given, the web dashboard) once the
 engine and web layers land in later phases.
 """
 
-from __future__ import annotations
-
 import argparse
 from collections.abc import Sequence
 

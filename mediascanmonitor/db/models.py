@@ -4,10 +4,11 @@
 tested explicitly. Secrets live only as Fernet ciphertext in `Server.secret_encrypted`;
 plaintext never touches a model field.
 
-This module intentionally omits ``from __future__ import annotations``: SQLModel 0.0.38 reads
-relationship targets from the evaluated annotation, and PEP 563 would hand SQLAlchemy the raw
-string ``"list['Folder']"`` instead of the class, breaking mapper configuration. Forward
-references are therefore quoted explicitly and carry ``# noqa: UP037``.
+Forward references (``list[Folder]``, ``list[FileType]``) are left UNQUOTED and this module —
+like the rest of the package — uses no ``from __future__ import annotations``: on Python 3.14
+PEP 649 defers annotation evaluation, so SQLModel/SQLAlchemy resolve relationship targets to the
+real classes when the mappers configure. The PEP 563 future import would instead stringize the
+annotation to ``"list['Folder']"`` and break mapper configuration.
 """
 
 from enum import StrEnum
@@ -50,7 +51,7 @@ class Server(SQLModel, table=True):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
-    folders: list["Folder"] = Relationship(  # noqa: UP037  forward ref; quote required (no PEP 563)
+    folders: list[Folder] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -63,7 +64,7 @@ class Folder(SQLModel, table=True):
     library_id: str | None = None  # backend section/library id; None for webhook
     enabled: bool = True
     server: Server = Relationship(back_populates="folders")
-    filetypes: list["FileType"] = Relationship(  # noqa: UP037  forward ref; quote required
+    filetypes: list[FileType] = Relationship(
         back_populates="folder",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )

@@ -1,7 +1,5 @@
 """Tests for SecretBox / load_or_create_key (contract section 3)."""
 
-from __future__ import annotations
-
 import stat
 from pathlib import Path
 

@@ -4,8 +4,6 @@ Leaf module: imports nothing from the rest of the package, so both `db` (sub-pla
 `config` (sub-plan 02) can depend down onto it without a cycle.
 """
 
-from __future__ import annotations
-
 import os
 
 

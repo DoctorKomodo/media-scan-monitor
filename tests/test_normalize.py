@@ -1,7 +1,5 @@
 """Tests for the pure path/extension normalizers (contract section 1.1)."""
 
-from __future__ import annotations
-
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 

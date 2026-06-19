@@ -1,7 +1,5 @@
 """Smoke tests for the CLI skeleton (Phase 0)."""
 
-from __future__ import annotations
-
 import pytest
 from mediascanmonitor import __version__
 from mediascanmonitor.cli import build_parser, main
