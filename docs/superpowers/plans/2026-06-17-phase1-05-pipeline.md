@@ -107,8 +107,6 @@ names and types match contract §6 exactly — do not rename.
 Create `tests/pipeline/factories.py`:
 
 ```python
-from __future__ import annotations
-
 from collections.abc import Iterable
 
 from mediascanmonitor.config.runtime import FolderRoute, RuntimeConfig, ServerRuntime
@@ -206,8 +204,6 @@ git commit -m "test(pipeline): add test package scaffolding and shared factories
 Create `tests/pipeline/test_filters.py`:
 
 ```python
-from __future__ import annotations
-
 from mediascanmonitor.pipeline.filters import extension_matches, is_ignored
 
 IGNORE = frozenset({"@eaDir", "#snapshot"})
@@ -278,8 +274,6 @@ Expected: collection error / `ModuleNotFoundError: No module named
 Create `mediascanmonitor/pipeline/filters.py`:
 
 ```python
-from __future__ import annotations
-
 
 def is_ignored(path: str, ignore_dirs: frozenset[str]) -> bool:
     """Return True if any *path segment* of ``path`` is in ``ignore_dirs``.
@@ -342,8 +336,6 @@ pure helper that `route` builds on. Write both test groups first (one file), imp
 Create `tests/pipeline/test_router.py`:
 
 ```python
-from __future__ import annotations
-
 from mediascanmonitor.db.models import ScanMode
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
 from mediascanmonitor.pipeline.router import compute_scan_path, route
@@ -480,8 +472,6 @@ Expected: collection error / `ModuleNotFoundError: No module named
 Create `mediascanmonitor/pipeline/router.py`:
 
 ```python
-from __future__ import annotations
-
 from mediascanmonitor.config.runtime import RuntimeConfig
 from mediascanmonitor.db.models import ScanMode
 from mediascanmonitor.pipeline.events import FsEvent, ScanRequest
@@ -598,8 +588,6 @@ Design notes (why it is shaped this way):
 Create `tests/pipeline/clock.py`:
 
 ```python
-from __future__ import annotations
-
 import asyncio
 
 
@@ -651,8 +639,6 @@ class ManualClock:
 Create `tests/pipeline/test_debounce.py`:
 
 ```python
-from __future__ import annotations
-
 from mediascanmonitor.db.models import DebounceMode, ScanMode
 from mediascanmonitor.pipeline.debounce import Debouncer
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
@@ -807,8 +793,6 @@ Expected: collection error / `ModuleNotFoundError: No module named
 Create `mediascanmonitor/pipeline/debounce.py`:
 
 ```python
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Awaitable, Callable
 
@@ -923,8 +907,6 @@ git commit -m "feat(pipeline): add per-server trailing/off debouncer with inject
 Create `tests/pipeline/test_dispatcher.py`:
 
 ```python
-from __future__ import annotations
-
 from mediascanmonitor.db.models import ScanMode, ServerType
 from mediascanmonitor.pipeline.dispatcher import Dispatcher
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
@@ -1032,8 +1014,6 @@ Expected: collection error / `ModuleNotFoundError: No module named
 Create `mediascanmonitor/pipeline/dispatcher.py`:
 
 ```python
-from __future__ import annotations
-
 import structlog
 
 from mediascanmonitor.pipeline.events import ScanRequest

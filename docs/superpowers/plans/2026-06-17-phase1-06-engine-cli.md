@@ -136,8 +136,6 @@ Create `tests/test_logging.py`:
 ```python
 """Tests for structlog configuration and secret redaction (sub-plan 06)."""
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -213,8 +211,6 @@ human-friendly console format, and a redaction processor that masks values
 for a fixed set of sensitive keys so secrets never reach the log sink
 (CLAUDE rule 5: "never log secrets").
 """
-
-from __future__ import annotations
 
 import logging
 
@@ -307,8 +303,6 @@ This is test infrastructure (no `test_` prefix, so pytest does not collect it). 
 
 Not collected by pytest (no ``test_`` prefix). Imported as ``tests._helpers``.
 """
-
-from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable
@@ -458,8 +452,6 @@ Create `tests/test_engine.py`:
 
 ```python
 """Engine wiring, rebuild, atomicity, and shutdown tests (sub-plan 06)."""
-
-from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
@@ -741,8 +733,6 @@ Single event loop, no blocking calls in the loop. The only DB read happens via
 ``asyncio.to_thread(build_runtime_config, repo)`` at the loop boundary. The
 watcher is injectable so non-Linux dev/tests can supply a fake backend.
 """
-
-from __future__ import annotations
 
 import asyncio
 from enum import Enum
@@ -1113,8 +1103,6 @@ Replace the entire contents of `tests/test_cli.py` with:
 ```python
 """CLI tests: parser smoke (Phase 0) + headless run wiring (Phase 1, sub-plan 06)."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import cast
 
@@ -1245,8 +1233,6 @@ Phase 1 implements ``run --no-web`` (headless engine). The full web dashboard
 arrives in Phase 3; ``run`` without ``--no-web`` prints a clear message and
 exits non-zero rather than crashing.
 """
-
-from __future__ import annotations
 
 import argparse
 import asyncio
@@ -1454,7 +1440,7 @@ git commit -m "chore(phase1-06): green ruff/mypy/pytest for engine, cli, logging
 | Revise existing `test_run_command_not_yet_implemented` (note explicitly) | Task 5 Step 1 note + replacement |
 | logging smoke test | Task 1 |
 | Fail fast on startup/config errors with a clear message | Task 5 `_cmd_run` try/except + `test_run_no_web_reports_startup_failure` |
-| mypy --strict / ruff / line-length 100 / `from __future__ import annotations` | Every code block; Task 6 gate |
+| mypy --strict / ruff / line-length 100 / no `from __future__ import annotations` (PEP 649) | Every code block; Task 6 gate |
 
 No gaps. No contract deviations: all consumed names match §1–§10 verbatim; `start()` consults the inotify gate and `rebuild()` follows §10's steps (`set_adapters` → `debouncer.update_servers` → swap snapshot → `set_roots`); the one-client-per-server choice fills a silence the contract leaves open (documented under "Design decisions").
 

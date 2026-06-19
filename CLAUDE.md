@@ -39,7 +39,11 @@ These override default behavior and apply to every change in this repo.
 3. **Structure & typing.** One responsibility per module; respect the boundaries below. Full
    type hints; `mypy --strict` clean. `ruff` for both lint and format. Validate every external
    boundary (UI input, REST I/O, backend responses) with Pydantic/SQLModel — don't pass raw
-   dicts around.
+   dicts around. **Annotations use PEP 649 (Python 3.14's default), never PEP 563:** do not add
+   `from __future__ import annotations` to any module; leave forward references unquoted
+   (`list[Folder]`). The future import stringizes annotations and breaks SQLModel relationship
+   mapping. Caveat: a name used in a runtime-introspected annotation (SQLModel/Pydantic/dataclass)
+   must be importable at runtime — never hide it behind `if TYPE_CHECKING:`.
 4. **Async discipline.** Async all the way down the I/O path (inotify, httpx fan-out, FastAPI
    share one event loop). No blocking calls in the event loop.
 5. **Security.** Never log secrets; redact them in API responses; encrypt secrets at rest; keep

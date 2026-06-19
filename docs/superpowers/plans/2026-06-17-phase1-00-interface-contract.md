@@ -26,12 +26,18 @@ on everything.
 ## 0. Conventions
 
 - Python ≥ 3.14 (single target: `requires-python`, `ruff`/`mypy` targets, CI, and the Docker
-  base image all pinned to 3.14), `from __future__ import annotations` at the top of every module.
-  **One exception: `db/models.py` must NOT use the future import** — SQLModel 0.0.38 reads
-  relationship targets from the *evaluated* annotation, and under PEP 563 a `list["Folder"]`
-  relationship annotation reaches SQLAlchemy as the raw string `"list['Folder']"`, so mapper
-  configuration raises `InvalidRequestError`. That module instead quotes its forward references
-  explicitly (see §2). All other modules keep the future import.
+  base image all pinned to 3.14).
+- **Annotations: PEP 649, not PEP 563.** Do **not** add `from __future__ import annotations` to
+  any module. Python 3.14 defers annotation evaluation natively (PEP 649), so forward references
+  stay **unquoted** (`list[Folder]`, not `list["Folder"]`) and runtime introspectors
+  (SQLModel/SQLAlchemy, Pydantic, dataclasses) resolve them to the *real* classes. The PEP 563
+  future import would instead stringize annotations — which is exactly what breaks SQLModel
+  relationship mapping (`list["Folder"]` → the literal string `"list['Folder']"` →
+  `InvalidRequestError`). `ruff`'s `UP037` already enforces unquoted forward refs, so linter and
+  runtime agree. **Discipline rule:** never reference a name that exists *only* under
+  `if TYPE_CHECKING:` inside a field annotation that a runtime library introspects (SQLModel /
+  Pydantic / dataclass / FastAPI) — under PEP 649 the library evaluates it and raises `NameError`
+  at runtime (startup or first use), not at import. Keep such names importable at runtime.
 - Full type hints; `mypy --strict` clean. `ruff` lint+format (line length 100).
 - Pure dataclasses for in-memory domain types use `@dataclass(frozen=True, slots=True)`.
 - SQLite path: `/config/app.db`. Secret key path: `/config/secret.key`. Both overridable by
@@ -129,7 +135,7 @@ class Server(SQLModel, table=True):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
-    folders: list["Folder"] = Relationship(  # noqa: UP037  forward ref; quote required (no PEP 563)
+    folders: list[Folder] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -141,7 +147,7 @@ class Folder(SQLModel, table=True):
     library_id: str | None = None              # backend section/library id; None for webhook
     enabled: bool = True
     server: Server = Relationship(back_populates="folders")
-    filetypes: list["FileType"] = Relationship(  # noqa: UP037  forward ref; quote required
+    filetypes: list[FileType] = Relationship(
         back_populates="folder",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -157,15 +163,13 @@ class Setting(SQLModel, table=True):
     value: str
 ```
 
-**No `from __future__ import annotations` here (the one exception, §0).** SQLModel 0.0.38
-configures relationships from the *evaluated* annotation; under PEP 563 the annotation arrives as
-the string `"list['Folder']"` and SQLAlchemy raises `InvalidRequestError` at first instantiation.
-`Mapped[...]` and an explicit `argument=` kwarg both also fail under that combination, so this
-module simply omits the future import. Forward references to a not-yet-defined table are then
-quoted (`list["Folder"]`, `list["FileType"]`) and carry `# noqa: UP037` — removing those quotes
-would `NameError` at class-definition time, so `ruff`'s "remove quotes" fix must be suppressed on
-exactly those two lines. Back references (`server: Server`, `folder: Folder`) point at already-
-defined classes and stay unquoted.
+**Forward refs are unquoted (PEP 649, §0).** `list[Folder]` / `list[FileType]` reference
+not-yet-defined tables but need no quotes: Python 3.14 defers annotation evaluation, so SQLModel
+resolves the real classes when the mappers configure. This is *why* the project bans
+`from __future__ import annotations` — PEP 563 would stringize the annotation to
+`"list['Folder']"` and SQLAlchemy would raise `InvalidRequestError` (and `Mapped[...]` / explicit
+`argument=` both also fail under sqlmodel 0.0.38 + PEP 563). With PEP 649 there is no special
+case here and no `# noqa`.
 
 **Foreign keys are enforced.** SQLite ignores `FOREIGN KEY` constraints unless
 `PRAGMA foreign_keys=ON` is set **per connection**. Sub-plan 01's engine factory registers a

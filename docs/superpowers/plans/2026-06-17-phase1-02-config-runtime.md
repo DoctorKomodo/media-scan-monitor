@@ -6,7 +6,7 @@
 
 **Architecture:** Three small, single-responsibility modules. `config/defaults.py` is pure constants (ignore-dirs, extension presets, debounce defaults); the path/extension **normalizers are NOT here** — they live in the leaf module `mediascanmonitor/normalize.py` owned by sub-plan 01 (contract §1.1), and this sub-plan imports them. `pipeline/events.py` defines frozen slotted dataclasses for the event pipeline. `config/runtime.py` defines the frozen runtime dataclasses and `build_runtime_config(repo)`, which reads enabled servers/folders/filetypes from the `Repo`, decrypts secrets via `repo.resolve_secret`, normalizes paths, and assembles an immutable `RuntimeConfig`.
 
-**Tech Stack:** Python ≥ 3.14, stdlib `dataclasses`/`enum`/`os`, `pydantic==2.13.4`/`sqlmodel==0.0.38` (only via the contract's `db/models.py` enums + table models, owned by sub-plan 01), `cryptography==49.0.0` (only indirectly, via the repo's `resolve_secret`). Tests use `pytest==9.1.0`. `mypy --strict` clean, `ruff` clean, line length 100, `from __future__ import annotations` in every module.
+**Tech Stack:** Python ≥ 3.14, stdlib `dataclasses`/`enum`/`os`, `pydantic==2.13.4`/`sqlmodel==0.0.38` (only via the contract's `db/models.py` enums + table models, owned by sub-plan 01), `cryptography==49.0.0` (only indirectly, via the repo's `resolve_secret`). Tests use `pytest==9.1.0`. `mypy --strict` clean, `ruff` clean, line length 100, no `from __future__ import annotations` (PEP 649 default on 3.14; forward refs unquoted).
 
 ---
 
@@ -116,8 +116,6 @@ Create `tests/config/test_defaults.py`:
 ```python
 """Tests for config/defaults.py — pure constants."""
 
-from __future__ import annotations
-
 from mediascanmonitor.config.defaults import (
     DEFAULT_DEBOUNCE_BY_TYPE,
     DEFAULT_DEBOUNCE_WINDOW_SECONDS,
@@ -183,8 +181,6 @@ Constants only — the path/extension normalizers live in the leaf module
 `db.models` and nothing else from the package; keep it import-light and pure.
 """
 
-from __future__ import annotations
-
 from mediascanmonitor.db.models import DebounceMode, ServerType
 
 # Synology (and similar NAS) system directories that must never trigger a scan.
@@ -246,8 +242,6 @@ Create `tests/pipeline/test_events.py`:
 
 ```python
 """Tests for pipeline/events.py — frozen slotted domain types."""
-
-from __future__ import annotations
 
 import dataclasses
 
@@ -366,8 +360,6 @@ router/debouncer/dispatcher (sub-plan 05) and must be cheap, immutable, and hash
 where needed.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 
@@ -428,8 +420,6 @@ Create `tests/config/test_runtime.py`:
 
 ```python
 """Tests for config/runtime.py — runtime snapshot dataclasses + builder."""
-
-from __future__ import annotations
 
 import dataclasses
 
@@ -556,8 +546,6 @@ Create `mediascanmonitor/config/runtime.py` (dataclasses verbatim from contract 
 The router and dispatcher (sub-plans 05/06) read this snapshot. Secrets are decrypted
 into ``ServerRuntime.secret`` here (in memory only) — adapters receive plaintext tokens.
 """
-
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -980,9 +968,11 @@ Run: `mypy mediascanmonitor/config mediascanmonitor/pipeline`
 Expected: `Success: no issues found in 3 source files`.
 
 If mypy complains about `server.id` being `int | None`, confirm the `assert server.id is not None`
-line is present in `build_runtime_config` (it narrows the type). If it complains about the
-`TYPE_CHECKING` import of `Repo`, confirm `from __future__ import annotations` is the first import
-in `runtime.py`.
+line is present in `build_runtime_config` (it narrows the type). The `TYPE_CHECKING`-only import
+of `Repo` is safe under PEP 649 without any future import: `Repo` appears only in the
+`build_runtime_config(repo: Repo)` *function signature*, which Python never evaluates at call
+time (unlike a dataclass/Pydantic field — see the §0 discipline rule). mypy resolves it via the
+`TYPE_CHECKING` block; runtime never touches it.
 
 - [ ] **Step 4: Run the full sub-plan test suite**
 

@@ -116,8 +116,6 @@ Create `tests/watcher/test_fake_watcher.py`:
 ```python
 """Unit tests for the FakeWatcher test double (runs on every platform)."""
 
-from __future__ import annotations
-
 import asyncio
 
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
@@ -186,8 +184,6 @@ Create `mediascanmonitor/watcher/base.py`:
 queue-fed implementation that needs no inotify, so the pipeline/engine tests and
 non-Linux development can drive `FsEvent`s deterministically.
 """
-
-from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterable
@@ -298,8 +294,6 @@ Create `tests/watcher/test_watch_limit.py`:
 ```python
 """Unit tests for the inotify watch-limit gate (runs on every platform)."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -338,8 +332,6 @@ These helpers count the directories a config will watch and compare against the
 current limit (with headroom) so the engine/dashboard can surface a clear
 "raise your watch limit" signal — re-implementing the legacy script's gate.
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 
@@ -419,8 +411,6 @@ Expected: FAIL — `AttributeError: module 'mediascanmonitor.watcher.watch_limit
 Edit `mediascanmonitor/watcher/watch_limit.py` — update the import line and append `count_dirs`:
 
 ```python
-from __future__ import annotations
-
 import os
 from collections.abc import Iterable
 from pathlib import Path
@@ -522,8 +512,6 @@ Expected: FAIL — `AttributeError: ... has no attribute 'check_watch_limit'`.
 Edit `mediascanmonitor/watcher/watch_limit.py` — extend the import block and append the dataclass + function:
 
 ```python
-from __future__ import annotations
-
 import math
 import os
 from collections.abc import Iterable
@@ -602,8 +590,6 @@ These import `inotify_backend` but never construct `InotifyBackend`, so they do
 not touch the Linux-only asyncinotify C bindings.
 """
 
-from __future__ import annotations
-
 from mediascanmonitor.pipeline.events import FsEventType
 from mediascanmonitor.watcher import inotify_backend as ib
 
@@ -669,8 +655,6 @@ import on any platform, which keeps the mask-mapping unit tests portable. We do
 NOT use asyncinotify's `add_watch(recursive=True)`: per-directory control is
 required for the watch-limit gate and for the attach-race rescan.
 """
-
-from __future__ import annotations
 
 from mediascanmonitor.pipeline.events import FsEventType
 
@@ -756,8 +740,6 @@ kernel, so each test performs a filesystem operation and then pulls the next
 event(s) from the async iterator with a bounded `asyncio.wait_for`. The
 ignore-dir test asserts the *absence* of an event via `TimeoutError`.
 """
-
-from __future__ import annotations
 
 import sys
 from collections.abc import AsyncIterator
@@ -884,8 +866,6 @@ Expected (on Linux): FAIL — `ImportError: cannot import name 'InotifyBackend'`
 Edit `mediascanmonitor/watcher/inotify_backend.py`. Replace the import block at the top of the file:
 
 ```python
-from __future__ import annotations
-
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -1254,7 +1234,7 @@ git commit -m "chore(watcher): formatting/lint pass for watcher package"
 - UNIT tests run everywhere (watch_limit, FakeWatcher, mask mapping); INTEGRATION marked Linux-only via `pytestmark` skipif — Tasks 1–7. ✓
 - Integration determinism via `asyncio.wait_for` draining, no arbitrary sleeps; negative case via `TimeoutError`/ordering — Task 6/7 + "Test markers & determinism". ✓
 - mypy per-module override for asyncinotify added when first imported — Task 6 Step 1. ✓
-- `from __future__ import annotations`, line length 100, mypy --strict, ruff — every file + verification Task 8. ✓
+- no `from __future__ import annotations` (PEP 649; forward refs unquoted), line length 100, mypy --strict, ruff — every file + verification Task 8. ✓
 
 **2. Placeholder scan:** No "TBD"/"handle edge cases"/"similar to"/"write tests for the above" — every code and test step contains complete code. ✓
 

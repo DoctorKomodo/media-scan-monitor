@@ -6,7 +6,7 @@
 
 **Architecture:** Five focused modules under `mediascanmonitor/db/` (`models`, `schemas`, `crypto`, `session`, `repo`) plus the pure leaf module `mediascanmonitor/normalize.py` (two normalizers, no package imports). Secrets are encrypted with Fernet and never stored or returned in plaintext except via `Repo.resolve_secret`. Sessions are created from a `session_factory` bound to a single SQLite engine (foreign keys enforced via a `PRAGMA foreign_keys=ON` connect listener); `init_db` migrates the DB to `head` via **Alembic** (no `create_all`, no `schema_version` row). All repo methods are **synchronous**, each opening its own session (per contract conventions; sub-plan 06 wraps them in `asyncio.to_thread`).
 
-**Tech Stack:** Python ≥ 3.14, `sqlmodel==0.0.38`, `alembic==1.18.4` (schema migrations), `cryptography==49.0.0` (Fernet), `pydantic==2.13.4`, dev: `pytest==9.1.0`, `pytest-asyncio==1.4.0`. `mypy --strict` clean, `ruff` clean, line length 100, `from __future__ import annotations` in every module.
+**Tech Stack:** Python ≥ 3.14, `sqlmodel==0.0.38`, `alembic==1.18.4` (schema migrations), `cryptography==49.0.0` (Fernet), `pydantic==2.13.4`, dev: `pytest==9.1.0`, `pytest-asyncio==1.4.0`. `mypy --strict` clean, `ruff` clean, line length 100, no `from __future__ import annotations` (PEP 649 default on 3.14; forward refs unquoted).
 
 ---
 
@@ -74,8 +74,6 @@ Create `tests/test_normalize.py`:
 ```python
 """Tests for the pure path/extension normalizers (contract section 1.1)."""
 
-from __future__ import annotations
-
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 
@@ -121,8 +119,6 @@ Create `mediascanmonitor/normalize.py`:
 Leaf module: imports nothing from the rest of the package, so both `db` (sub-plan 01) and
 `config` (sub-plan 02) can depend down onto it without a cycle.
 """
-
-from __future__ import annotations
 
 import os
 
@@ -177,8 +173,6 @@ Create `tests/db/test_models.py`:
 
 ```python
 """Tests for the SQLModel tables and enums (contract sections 1-2)."""
-
-from __future__ import annotations
 
 from sqlalchemy import Engine
 from sqlalchemy.pool import StaticPool
@@ -288,14 +282,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'mediascanmonitor.db.mo
 
 Create `mediascanmonitor/db/models.py` (reproduce the frozen contract verbatim):
 
-> **No `from __future__ import annotations` in this module** (the single exception to the
-> project-wide convention — contract §0/§2). SQLModel 0.0.38 configures relationships from the
-> *evaluated* annotation; under PEP 563 a `list["Folder"]` relationship annotation reaches
-> SQLAlchemy as the raw string `"list['Folder']"` and mapper configuration raises
-> `InvalidRequestError` on first instantiation (`Mapped[...]` and explicit `argument=` both also
-> fail under sqlmodel 0.0.38 + Python 3.14). Enums subclass `StrEnum` (satisfies `ruff` `UP042`,
-> behaviorally equivalent). The two forward-ref relationship lines carry `# noqa: UP037` because
-> removing those quotes would `NameError` at class-definition time.
+> **Forward refs are unquoted (PEP 649 — contract §0/§2).** Like every module, this one uses no
+> `from __future__ import annotations`. On Python 3.14 PEP 649 defers annotation evaluation, so
+> `list[Folder]` / `list[FileType]` resolve to the real classes when SQLModel/SQLAlchemy configure
+> the mappers — no quotes, no `# noqa`. The PEP 563 future import would instead stringize the
+> annotation to `"list['Folder']"` and raise `InvalidRequestError` (and `Mapped[...]` / explicit
+> `argument=` both also fail under sqlmodel 0.0.38). Enums subclass `StrEnum` (satisfies `ruff`
+> `UP042`, behaviorally equivalent).
 
 ```python
 """SQLModel persistence models and enums (frozen interface contract, sections 1-2).
@@ -304,10 +297,11 @@ Create `mediascanmonitor/db/models.py` (reproduce the frozen contract verbatim):
 tested explicitly. Secrets live only as Fernet ciphertext in `Server.secret_encrypted`;
 plaintext never touches a model field.
 
-This module intentionally omits ``from __future__ import annotations``: SQLModel 0.0.38 reads
-relationship targets from the evaluated annotation, and PEP 563 would hand SQLAlchemy the raw
-string ``"list['Folder']"`` instead of the class, breaking mapper configuration. Forward
-references are therefore quoted explicitly and carry ``# noqa: UP037``.
+Forward references (``list[Folder]``, ``list[FileType]``) are left UNQUOTED and this module —
+like the rest of the package — uses no ``from __future__ import annotations``: on Python 3.14
+PEP 649 defers annotation evaluation, so SQLModel/SQLAlchemy resolve relationship targets to the
+real classes when the mappers configure. The PEP 563 future import would instead stringize the
+annotation to ``"list['Folder']"`` and break mapper configuration.
 """
 
 from enum import StrEnum
@@ -350,7 +344,7 @@ class Server(SQLModel, table=True):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
-    folders: list["Folder"] = Relationship(  # noqa: UP037  forward ref; quote required (no PEP 563)
+    folders: list[Folder] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -363,7 +357,7 @@ class Folder(SQLModel, table=True):
     library_id: str | None = None              # backend section/library id; None for webhook
     enabled: bool = True
     server: Server = Relationship(back_populates="folders")
-    filetypes: list["FileType"] = Relationship(  # noqa: UP037  forward ref; quote required
+    filetypes: list[FileType] = Relationship(
         back_populates="folder",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -407,8 +401,6 @@ Create `tests/db/test_crypto.py`:
 
 ```python
 """Tests for SecretBox / load_or_create_key (contract section 3)."""
-
-from __future__ import annotations
 
 import stat
 from pathlib import Path
@@ -491,8 +483,6 @@ Create `mediascanmonitor/db/crypto.py`:
 precedence env_key > file at path > generate-and-write (chmod 0600). The plaintext of a
 secret only ever exists transiently inside `encrypt`/`decrypt`.
 """
-
-from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -580,8 +570,6 @@ Create `tests/db/test_session.py`:
 ```python
 """Tests for init_db (Alembic upgrade) / session_factory (contract §2/§4)."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -661,8 +649,6 @@ Create `mediascanmonitor/migrations/env.py`:
 ```python
 """Alembic environment (online-only; the app never runs `alembic upgrade --sql`)."""
 
-from __future__ import annotations
-
 from alembic import context
 from sqlalchemy import engine_from_config, event, pool
 from sqlmodel import SQLModel
@@ -710,8 +696,6 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 """
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -761,8 +745,6 @@ migration step required by rule 7 — no `create_all`). Sessions are built with
 `expire_on_commit=False` so ORM instances returned from `Repo` methods stay usable after
 their session closes. Foreign keys are enforced per connection (`PRAGMA foreign_keys=ON`).
 """
-
-from __future__ import annotations
 
 import os
 from collections.abc import Callable
@@ -859,8 +841,6 @@ Create `tests/db/test_schemas.py`:
 ```python
 """Tests for the Pydantic boundary schemas (contract section 4)."""
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 
@@ -934,8 +914,6 @@ Create `mediascanmonitor/db/schemas.py`:
 before storage. `ServerUpdate` is a partial-update model — callers send only the fields
 they want changed, and the repo applies them via ``model_dump(exclude_unset=True)``.
 """
-
-from __future__ import annotations
 
 import os
 
@@ -1039,8 +1017,6 @@ Create `tests/db/conftest.py`:
 ```python
 """Shared fixtures for repo tests: a real file-backed SQLite DB under tmp_path."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from pathlib import Path
 
@@ -1073,8 +1049,6 @@ Create `tests/db/test_repo.py`:
 
 ```python
 """Tests for the Repo CRUD/crypto contract (contract section 4)."""
-
-from __future__ import annotations
 
 from collections.abc import Callable
 
@@ -1269,8 +1243,6 @@ methods are safe to run inside `asyncio.to_thread` (sub-plan 06). Error model: m
 mutations raise `KeyError`; deletes are idempotent; create surfaces `IntegrityError` (duplicate
 name / dangling `server_id`).
 """
-
-from __future__ import annotations
 
 from collections.abc import Callable
 
@@ -1518,8 +1490,8 @@ git commit -m "style: apply ruff format to db/crypto modules"
   `test_create_folder_unknown_server_raises` (Task 5); engine listener (Task 3). ✓
 - Repo error model (missing-id → `KeyError`; deletes idempotent) →
   `test_update_server_unknown_raises`, `test_delete_missing_is_idempotent` (Task 5). ✓
-- mypy --strict / ruff / line-length 100 / `from __future__ import annotations` → every module
-  has the future import; Task 6 verifies. ✓
+- mypy --strict / ruff / line-length 100 / no `from __future__ import annotations` (PEP 649;
+  forward refs unquoted) → every module; Task 6 verifies. ✓
 - Repo methods sync, own-session-per-call (to_thread-safe); secrets only via `resolve_secret` →
   enforced in `repo.py` (Task 5). ✓
 - Commits `git add` only task-relevant files → every Task's Step 5. ✓

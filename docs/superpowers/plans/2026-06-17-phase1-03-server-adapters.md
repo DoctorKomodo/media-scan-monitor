@@ -6,7 +6,7 @@
 
 **Architecture:** All backend-specific behavior lives behind the `ServerAdapter` ABC (contract section 7). A class-decorator registry maps `ServerType` → adapter class so adding a backend later is one new file + one `@register`. A shared `http.py` owns client construction and a tenacity-based `request_with_retry` (retry on transport errors and 5xx, exponential backoff, never on 4xx) with an injectable async-sleep so tests never actually sleep. `PlexAdapter` is the sole concrete adapter; every Plex quirk (token-in-header, `?path=` encoding, 2xx-means-ok) is confined to `plex.py` — the watcher and pipeline never special-case Plex.
 
-**Tech Stack:** Python 3.14+, `httpx==0.28.1`, `tenacity==9.1.4`, async adapters; tests with `pytest==9.1.0`, `pytest-asyncio==1.4.0` (`asyncio_mode=auto`), `respx==0.23.1`. `mypy --strict` clean, `ruff` clean, line length 100, `from __future__ import annotations` at the top of every module.
+**Tech Stack:** Python 3.14+, `httpx==0.28.1`, `tenacity==9.1.4`, async adapters; tests with `pytest==9.1.0`, `pytest-asyncio==1.4.0` (`asyncio_mode=auto`), `respx==0.23.1`. `mypy --strict` clean, `ruff` clean, line length 100, no `from __future__ import annotations` (PEP 649 default on 3.14; forward refs unquoted).
 
 ---
 
@@ -70,8 +70,6 @@ Create `tests/servers/conftest.py`:
 The builders construct the FROZEN contract types (ServerRuntime / ScanRequest)
 with full keyword signatures so mypy --strict stays happy (no **dict splatting).
 """
-
-from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
@@ -173,8 +171,6 @@ Create `tests/servers/test_base.py`:
 ```python
 """Shape tests for the ServerAdapter ABC and result dataclasses."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import httpx
@@ -245,8 +241,6 @@ A "server" is a notification target (Plex, Emby, ...). Every backend-specific
 detail lives in a concrete adapter; the watcher and pipeline only ever see this
 ABC and the two result dataclasses below.
 """
-
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -333,8 +327,6 @@ Create `tests/servers/test_registry.py`:
 ```python
 """Registry mechanics: register / get_adapter_class / create_adapter / unknown error."""
 
-from __future__ import annotations
-
 import httpx
 import pytest
 
@@ -400,8 +392,6 @@ Create `mediascanmonitor/servers/registry.py`:
 Adding a backend = define a ServerAdapter subclass in its own module and decorate
 it with @register. Nothing else in the codebase needs to learn the new type.
 """
-
-from __future__ import annotations
 
 import httpx
 
@@ -471,8 +461,6 @@ tenacity's AsyncRetrying as its ``sleep`` callable, and looks that global up at 
 time. Patching ``http._async_sleep`` therefore replaces the backoff sleep with an
 instant no-op; we then prove retries happened by counting respx calls, not by timing.
 """
-
-from __future__ import annotations
 
 import httpx
 import pytest
@@ -583,8 +571,6 @@ between attempts is the module-level ``_async_sleep`` so tests can patch it to a
 no-op (see tests/servers/test_http.py).
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 
@@ -684,8 +670,6 @@ Create `tests/servers/test_plex.py`:
 
 ```python
 """PlexAdapter: exact URL/encoding/header, success/failure classification, test()."""
-
-from __future__ import annotations
 
 import httpx
 import pytest
@@ -855,8 +839,6 @@ PLEX API QUIRKS (kept here so the watcher/pipeline never special-case Plex):
 ------------------------------------------------------------------------------
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 from urllib.parse import quote
 
@@ -924,8 +906,6 @@ class PlexAdapter(ServerAdapter):
 Modify `mediascanmonitor/servers/__init__.py` — append below the existing docstring so `PlexAdapter` registers whenever the package is imported (the engine imports `mediascanmonitor.servers`):
 
 ```python
-from __future__ import annotations
-
 # Importing the concrete adapter modules triggers their @register decorators so
 # create_adapter() can find them. Add one line here per new server type.
 from mediascanmonitor.servers import plex as _plex  # noqa: F401  (registration side effect)
@@ -995,7 +975,7 @@ git commit -m "test(servers): verify full adapter suite, types, and lint clean"
 - `http.py` `build_client(verify_tls, timeout_seconds)` + `request_with_retry(... attempts ...)` using tenacity (retry on `httpx.TransportError` + 5xx, exp backoff, no retry on 4xx), mockable sleep → Task 3. ✓
 - `plex.py` `PlexAdapter`, registered, `server_type=plex`, `supported_scan_modes={targeted, library}`; targeted vs library URL; `X-Plex-Token` header; `/identity` test; 2xx⇒ok → Task 4. ✓
 - Required tests: targeted exact URL + encoded `path=` (space + `&`), token-in-header-not-URL, library no-`path`, 200⇒ok / 401&404⇒not-ok / transport⇒not-ok, retry-on-503-then-success with call count, give-up-after-attempts, no-retry-on-404, registry get/create + unknown raises, `test()` happy + 401 → Tasks 2–4. ✓
-- Constraints: `from __future__ import annotations` in every module; mypy --strict & ruff gates per task + Task 5; line length 100; async adapters; Plex quirks documented inline; pipeline/watcher never special-case Plex (stated in Architecture + plex.py docstring). ✓
+- Constraints: no `from __future__ import annotations` (PEP 649; forward refs unquoted); mypy --strict & ruff gates per task + Task 5; line length 100; async adapters; Plex quirks documented inline; pipeline/watcher never special-case Plex (stated in Architecture + plex.py docstring). ✓
 - No new deps: only `httpx`, `tenacity` (runtime) and `pytest`/`pytest-asyncio`/`respx` (dev), all pinned in `pyproject.toml`. ✓
 
 **2. Placeholder scan:** No TBD/TODO/"handle edge cases"/"similar to"/"write tests for the above" — every code and test step contains complete, runnable content. ✓
