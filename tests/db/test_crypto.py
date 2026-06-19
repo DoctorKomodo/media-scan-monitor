@@ -49,6 +49,14 @@ def test_load_or_create_key_reads_existing_file(tmp_path: Path) -> None:
     assert load_or_create_key(key_path) == key
 
 
+def test_load_or_create_key_strips_file_whitespace(tmp_path: Path) -> None:
+    # a key file written with a trailing newline (Docker secret / editor) must load cleanly
+    key = Fernet.generate_key()
+    key_path = tmp_path / "secret.key"
+    key_path.write_bytes(key + b"\n")
+    assert load_or_create_key(key_path) == key
+
+
 def test_load_or_create_key_generates_file_with_mode_0600(tmp_path: Path) -> None:
     key_path = tmp_path / "sub" / "secret.key"
     key = load_or_create_key(key_path)
