@@ -74,6 +74,16 @@ def test_update_server_reencrypts_secret(repo: Repo) -> None:
     assert repo.resolve_secret(updated) == "new"
 
 
+def test_update_server_clears_secret_when_explicitly_none(repo: Repo) -> None:
+    # explicit secret=None clears the stored credential (distinct from omitting it)
+    server = repo.create_server(make_server(secret="tok"))
+    assert server.id is not None
+    assert server.secret_encrypted is not None
+    updated = repo.update_server(server.id, ServerUpdate(secret=None))
+    assert updated.secret_encrypted is None
+    assert repo.resolve_secret(updated) is None
+
+
 def test_delete_server_cascades_to_folders_and_filetypes(
     repo: Repo, factory: Callable[[], Session]
 ) -> None:
@@ -158,6 +168,11 @@ def test_create_folder_unknown_server_raises(repo: Repo) -> None:
 def test_update_server_unknown_raises(repo: Repo) -> None:
     with pytest.raises(KeyError):
         repo.update_server(9999, ServerUpdate(enabled=False))
+
+
+def test_set_filetypes_unknown_folder_raises(repo: Repo) -> None:
+    with pytest.raises(KeyError):
+        repo.set_filetypes(9999, ["mkv"])
 
 
 def test_delete_missing_is_idempotent(repo: Repo) -> None:
