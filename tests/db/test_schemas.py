@@ -25,6 +25,17 @@ def test_server_create_accepts_plaintext_secret() -> None:
     assert s.secret == "plain"
 
 
+def test_plaintext_secret_excluded_from_repr() -> None:
+    # contract invariant 3: a decrypted secret must never appear in __repr__/__str__
+    # (which leak into logs, tracebacks, and Pydantic validation errors).
+    create = ServerCreate(name="plex1", type=ServerType.plex, secret="super-secret")
+    update = ServerUpdate(secret="super-secret")
+    assert "super-secret" not in repr(create)
+    assert "super-secret" not in str(create)
+    assert "super-secret" not in repr(update)
+    assert "super-secret" not in str(update)
+
+
 def test_server_update_tracks_only_set_fields() -> None:
     u = ServerUpdate(enabled=False)
     assert u.model_dump(exclude_unset=True) == {"enabled": False}

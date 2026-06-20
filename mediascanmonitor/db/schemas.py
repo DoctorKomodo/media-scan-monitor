@@ -19,7 +19,9 @@ class ServerCreate(BaseModel):
     base_url: str = ""
     verify_tls: bool = True
     timeout_seconds: float = 10.0
-    secret: str | None = None  # plaintext; encrypted by the repo
+    # plaintext, encrypted by the repo; repr=False keeps it out of __repr__/logs/tracebacks
+    # and Pydantic validation errors (contract invariant 3).
+    secret: str | None = Field(default=None, repr=False)
     scan_mode: ScanMode = ScanMode.targeted
     debounce_mode: DebounceMode = DebounceMode.trailing
     debounce_window_seconds: int = 30
@@ -38,7 +40,8 @@ class ServerUpdate(BaseModel):
     timeout_seconds: float | None = None
     # plaintext secret tri-state via exclude_unset: a str re-encrypts; explicit None clears
     # the stored secret; omitting the field entirely leaves secret_encrypted unchanged.
-    secret: str | None = None
+    # repr=False keeps plaintext out of __repr__/logs/tracebacks (contract invariant 3).
+    secret: str | None = Field(default=None, repr=False)
     scan_mode: ScanMode | None = None
     debounce_mode: DebounceMode | None = None
     debounce_window_seconds: int | None = None
