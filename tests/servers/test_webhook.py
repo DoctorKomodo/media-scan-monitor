@@ -118,6 +118,7 @@ async def test_header_value_renders_encrypted_secret(client: httpx.AsyncClient) 
     assert "s3cr3t" not in str(request.url)  # secret never in the URL
 
 
+@respx.mock
 async def test_empty_url_is_error(client: httpx.AsyncClient) -> None:
     adapter = WebhookAdapter(webhook_runtime(base_url=""), client)
     res = await adapter.trigger(library_request())
@@ -126,16 +127,25 @@ async def test_empty_url_is_error(client: httpx.AsyncClient) -> None:
     assert "url" in res.detail.lower()
 
 
+@respx.mock
 async def test_dangerous_template_is_rejected_by_sandbox(
     client: httpx.AsyncClient,
 ) -> None:
-    # SandboxedEnvironment blocks attribute access; no HTTP request is made.
-    adapter = WebhookAdapter(webhook_runtime(webhook_body_template="{{ ''.__class__ }}"), client)
+    # A real sandbox-escape probe: SandboxedEnvironment raises SecurityError (a
+    # TemplateError) when the template walks into class internals, so trigger()
+    # returns ok=False BEFORE any HTTP call. @respx.mock registers no route, so if
+    # rendering ever stopped raising and a request escaped, this test would fail
+    # with AllMockedAssertionError instead of passing silently.
+    adapter = WebhookAdapter(
+        webhook_runtime(webhook_body_template="{{ ''.__class__.__mro__[1].__subclasses__() }}"),
+        client,
+    )
     res = await adapter.trigger(library_request())
     assert res.ok is False
     assert res.status_code is None
 
 
+@respx.mock
 async def test_invalid_headers_json_is_error(client: httpx.AsyncClient) -> None:
     adapter = WebhookAdapter(webhook_runtime(webhook_headers_json="not json"), client)
     res = await adapter.trigger(library_request())
