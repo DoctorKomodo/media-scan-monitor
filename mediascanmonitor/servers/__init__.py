@@ -9,6 +9,9 @@ Populated in Phase 1 (`base`, `registry`, `http`, `plex`) and Phase 2
 
 # Importing the concrete adapter modules triggers their @register decorators so
 # create_adapter() can find them. Add one line here per new server type.
+from mediascanmonitor.servers import (
+    audiobookshelf as _audiobookshelf,  # noqa: F401  (registration side effect)
+)
 from mediascanmonitor.servers import emby as _emby  # noqa: F401  (registration side effect)
 from mediascanmonitor.servers import jellyfin as _jellyfin  # noqa: F401  (registration side effect)
 from mediascanmonitor.servers import plex as _plex  # noqa: F401  (registration side effect)
