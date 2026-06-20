@@ -36,7 +36,7 @@ IN_MOVED_FROM = 0x00000040
 IN_MOVED_TO = 0x00000080
 IN_CREATE = 0x00000100
 IN_DELETE = 0x00000200
-IN_Q_OVERFLOW = 0x00004000   # kernel queue overflow — events were dropped; triggers a resync
+IN_Q_OVERFLOW = 0x00004000  # kernel queue overflow — events were dropped; triggers a resync
 IN_ISDIR = 0x40000000
 
 
@@ -137,17 +137,44 @@ class InotifyBackend:
 
     async def events(self) -> AsyncIterator[FsEvent]:
         async for event in self._inotify:
+            mask = int(event.mask)
+            if mask & IN_Q_OVERFLOW:
+                # Kernel dropped events (queue overflow). Re-attach watches across all
+                # roots (a subdir whose CREATE was dropped is otherwise unwatched) and
+                # re-emit their contents as synthetic `created` events so nothing is
+                # silently missed. The per-scan_key debouncer collapses the burst.
+                logger.warning("inotify queue overflow; resyncing watches under all roots")
+                for root in sorted(self._roots):
+                    for synthetic in self._walk_add_watches(root):
+                        yield synthetic
+                continue
             path_obj = event.path
             if path_obj is None:
                 continue
             path = normalize_path(str(path_obj))
             if self._is_ignored(path):
                 continue
-            mask = int(event.mask)
             event_type = mask_to_event_type(mask)
             if event_type is None:
                 continue
-            yield FsEvent(path, event_type, is_dir=mask_is_dir(mask))
+            is_dir = mask_is_dir(mask)
+
+            if is_dir and event_type in (FsEventType.created, FsEventType.moved_to):
+                # A new subdirectory appeared: attach watches across its subtree
+                # and rescan its existing contents (closes the mkdir->add_watch
+                # attach race). Duplicate events versus later real events are
+                # harmless — the pipeline debounces per scan_key.
+                yield FsEvent(path, event_type, is_dir=True)
+                for synthetic in self._walk_add_watches(path):
+                    yield synthetic
+                continue
+
+            if is_dir and event_type in (FsEventType.deleted, FsEventType.moved_from):
+                self._remove_watch_tree(path)
+                yield FsEvent(path, event_type, is_dir=True)
+                continue
+
+            yield FsEvent(path, event_type, is_dir=is_dir)
 
     async def aclose(self) -> None:
         self._inotify.close()

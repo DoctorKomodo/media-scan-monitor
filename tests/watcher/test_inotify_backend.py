@@ -15,9 +15,7 @@ import pytest
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
 from mediascanmonitor.watcher.inotify_backend import InotifyBackend
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux", reason="inotify backend is Linux-only"
-)
+pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="inotify backend is Linux-only")
 
 IGNORE = frozenset({"@eaDir", "#snapshot"})
 TIMEOUT = 2.0
@@ -118,4 +116,103 @@ async def test_ignore_dir_contents_produce_no_events(tmp_path: Path) -> None:
         assert event.event_type is FsEventType.created
     finally:
         await agen.aclose()
+        await backend.aclose()
+
+
+async def test_new_subdir_is_watched_and_inner_file_emits_event(tmp_path: Path) -> None:
+    backend = InotifyBackend(IGNORE)
+    backend.set_roots({str(tmp_path)})
+    agen = backend.events()
+    try:
+        # Create a brand-new show folder *after* watching started.
+        new_show = tmp_path / "NewShow"
+        new_show.mkdir()
+        subdir_event = await collect_event_for(agen, str(new_show))
+        assert subdir_event.event_type is FsEventType.created
+        assert subdir_event.is_dir is True
+
+        # A file dropped into the new dir must produce an event -> the dynamic
+        # watch attached. (Recursive dynamic watch behavior.)
+        inner = new_show / "s01e01.mkv"
+        inner.write_text("x")
+        inner_event = await collect_event_for(agen, str(inner))
+
+        assert inner_event.event_type is FsEventType.created
+        assert inner_event.is_dir is False
+    finally:
+        await agen.aclose()
+        await backend.aclose()
+
+
+async def test_new_subdir_rescan_emits_synthetic_created_for_existing_child(
+    tmp_path: Path,
+) -> None:
+    backend = InotifyBackend(IGNORE)
+    backend.set_roots({str(tmp_path)})
+    agen = backend.events()
+    try:
+        # Simulate the attach race: a directory that already contains a file is
+        # moved into the watched root in one step (mkdir + file before we attach).
+        staging = tmp_path.parent / f"{tmp_path.name}_staging"
+        staging.mkdir()
+        (staging / "preexisting.mkv").write_text("x")
+        moved = tmp_path / "MovedShow"
+        staging.rename(moved)  # appears as a single MOVED_TO (dir) on the root
+
+        # The rescan must surface the file that existed before we could attach.
+        event = await collect_event_for(agen, str(moved / "preexisting.mkv"))
+
+        assert event.event_type is FsEventType.created
+        assert event.is_dir is False
+    finally:
+        await agen.aclose()
+        await backend.aclose()
+
+
+async def test_directory_deletion_removes_watches(tmp_path: Path) -> None:
+    show = tmp_path / "OldShow"
+    show.mkdir()
+    backend = InotifyBackend(IGNORE)
+    backend.set_roots({str(tmp_path)})
+    agen = backend.events()
+    try:
+        # Confirm the dir is watched, then delete it.
+        assert str(show) in backend._watches  # white-box check
+        show.rmdir()
+
+        event = await collect_event_for(agen, str(show))
+
+        assert event.event_type is FsEventType.deleted
+        assert event.is_dir is True
+        # The watch for the removed directory must be gone.
+        assert str(show) not in backend._watches  # watch removed on dir deletion
+    finally:
+        await agen.aclose()
+        await backend.aclose()
+
+
+async def test_add_watch_failure_is_logged_not_fatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Simulate the kernel watch limit (ENOSPC) being hit at add_watch time: the watcher
+    # must log and degrade (leave the dir unwatched), never crash (contract §8).
+    (tmp_path / "Show").mkdir()
+    backend = InotifyBackend(IGNORE)
+
+    def boom(self: object, path: object, mask: object) -> None:
+        raise OSError(28, "No space left on device")  # errno 28 = ENOSPC
+
+    # asyncinotify's Inotify uses __slots__, so add_watch cannot be patched on the
+    # instance (read-only); patch the class with a self-bearing stub instead.
+    # monkeypatch auto-reverts the class attribute after the test.
+    monkeypatch.setattr(type(backend._inotify), "add_watch", boom)
+    try:
+        with caplog.at_level("WARNING"):
+            backend.set_roots({str(tmp_path)})  # must NOT raise
+
+        assert str(tmp_path) not in backend._watches  # degraded, not watched
+        assert any("add_watch failed" in r.getMessage() for r in caplog.records)
+    finally:
         await backend.aclose()
