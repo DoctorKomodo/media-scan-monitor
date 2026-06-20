@@ -91,6 +91,10 @@ exclude = ['^mediascanmonitor/migrations/']
 # Per-library import overrides (e.g. asyncinotify) are added in Phase 1 when those
 # modules are first imported, to keep `warn_unused_configs` quiet until then.
 
+[[tool.mypy.overrides]]
+module = ["asyncinotify.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
