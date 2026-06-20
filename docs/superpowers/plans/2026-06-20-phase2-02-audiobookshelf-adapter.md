@@ -8,8 +8,10 @@ registry.
 
 **Architecture:** One self-contained module under `mediascanmonitor/servers/`, subclassing the frozen
 `ServerAdapter` ABC (Phase 1 contract §7). ABS has its own API shape (distinct from the MediaBrowser
-`/Items/{id}/Refresh` siblings), so it is its own plan/file. **Library-scan only** — no native path
-targeting.
+`/Items/{id}/Refresh` siblings), so it is its own plan/file. **Library-scan only by deliberate
+choice:** the `/api/libraries/{id}/scan` endpoint this adapter uses is whole-library, but ABS *does*
+support path-targeted notifications via `POST /api/watcher/update` (ABS ≥2.9.0) — adopting that is a
+deferred enhancement (see Phase 2 README convention 2 and `docs/FOLLOWUPS.md`).
 
 **Tech Stack:** Python 3.14, `httpx==0.28.1`, `tenacity==9.1.4` (via `servers/http.py`),
 `respx==0.23.1`, `pytest==9.1.0` + `pytest-asyncio==1.4.0`. `ruff`/`mypy --strict` clean, line length
@@ -124,7 +126,8 @@ def test_abs_is_registered() -> None:
 
 
 async def test_create_adapter_builds_abs(client: httpx.AsyncClient) -> None:
-    adapter = registry.create_adapter(abs_runtime(), client)    assert isinstance(adapter, AudiobookshelfAdapter)
+    adapter = registry.create_adapter(abs_runtime(), client)
+    assert isinstance(adapter, AudiobookshelfAdapter)
     assert adapter.client is client
 
 
@@ -150,14 +153,18 @@ async def test_trigger_http_error_is_not_ok(
     client: httpx.AsyncClient, status: int
 ) -> None:
     respx.post(SCAN).mock(return_value=httpx.Response(status))
-    adapter = AudiobookshelfAdapter(abs_runtime(), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = AudiobookshelfAdapter(abs_runtime(), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code == status
 
 
 @respx.mock
 async def test_trigger_transport_error_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.post(SCAN).mock(side_effect=httpx.ConnectError("down"))
-    adapter = AudiobookshelfAdapter(abs_runtime(retry_attempts=1), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = AudiobookshelfAdapter(abs_runtime(retry_attempts=1), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
     assert "down" in res.detail or "ConnectError" in res.detail
 
@@ -165,7 +172,8 @@ async def test_trigger_transport_error_is_not_ok(client: httpx.AsyncClient) -> N
 @respx.mock
 async def test_test_happy_path_hits_me_with_bearer(client: httpx.AsyncClient) -> None:
     route = respx.get(ME).mock(return_value=httpx.Response(200))
-    adapter = AudiobookshelfAdapter(abs_runtime(secret="tok-secret"), client)    res = await adapter.test()
+    adapter = AudiobookshelfAdapter(abs_runtime(secret="tok-secret"), client)
+    res = await adapter.test()
     assert res.ok is True
     request = route.calls.last.request
     assert request.method == "GET"
@@ -176,7 +184,8 @@ async def test_test_happy_path_hits_me_with_bearer(client: httpx.AsyncClient) ->
 @respx.mock
 async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.get(ME).mock(return_value=httpx.Response(401))
-    adapter = AudiobookshelfAdapter(abs_runtime(), client)    res = await adapter.test()
+    adapter = AudiobookshelfAdapter(abs_runtime(), client)
+    res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
 ```
@@ -196,12 +205,13 @@ Create `mediascanmonitor/servers/audiobookshelf.py`:
 ------------------------------------------------------------------------------
 AUDIOBOOKSHELF API QUIRKS (kept here so the watcher/pipeline never special-case it):
 
-* Library scan (no native path targeting — library mode only):
+* Library scan (this endpoint is whole-library; we use library mode only):
     POST {base_url}/api/libraries/{library_id}/scan
   ABS rescans that library asynchronously. The configured ``library_id`` is the
   ABS library id (set in the UI). ``?force=1`` (force a full re-scan of unchanged
   items) is intentionally omitted — the default incremental scan is what a
-  file-change notification wants.
+  file-change notification wants. (ABS also has a path-targeted POST /api/watcher/update,
+  but adopting per-folder targeting here is a deferred enhancement — see docs/FOLLOWUPS.md.)
 
 * Auth: Authorization: Bearer {token} HEADER. Never in the URL.
 

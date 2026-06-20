@@ -11,7 +11,9 @@ subclassing the frozen `ServerAdapter` ABC (Phase 1 contract §7). They are buil
 their API shape is near-identical, but they share **no base class** — backend quirks (Emby's
 `X-Emby-Token` header vs. Jellyfin's `Authorization: MediaBrowser Token="…"` plus its mandatory
 `metadataRefreshMode`/`imageRefreshMode` query params) live in each adapter, so a future divergence
-of either API touches only its own file (CLAUDE.md rule 2). Both are **library-refresh only**.
+of either API touches only its own file (CLAUDE.md rule 2). Both deliberately do **library-refresh
+only** — Emby/Jellyfin *do* support path-targeted notifications (`POST /Library/Media/Updated`),
+but per-folder targeting for them is deferred (see the Phase 2 README, convention 2).
 
 **Tech Stack:** Python 3.14, `httpx==0.28.1` (async), `tenacity==9.1.4` (retry, via `servers/http.py`),
 `respx==0.23.1` (test transport mock), `pytest==9.1.0` + `pytest-asyncio==1.4.0`. `ruff`/`mypy --strict`
@@ -129,7 +131,8 @@ def test_emby_is_registered() -> None:
 
 
 async def test_create_adapter_builds_emby(client: httpx.AsyncClient) -> None:
-    adapter = registry.create_adapter(emby_runtime(), client)    assert isinstance(adapter, EmbyAdapter)
+    adapter = registry.create_adapter(emby_runtime(), client)
+    assert isinstance(adapter, EmbyAdapter)
     assert adapter.client is client
 
 
@@ -157,14 +160,18 @@ async def test_trigger_http_error_is_not_ok(
     client: httpx.AsyncClient, status: int
 ) -> None:
     respx.post(REFRESH).mock(return_value=httpx.Response(status))
-    adapter = EmbyAdapter(emby_runtime(), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = EmbyAdapter(emby_runtime(), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code == status
 
 
 @respx.mock
 async def test_trigger_transport_error_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.post(REFRESH).mock(side_effect=httpx.ConnectError("down"))
-    adapter = EmbyAdapter(emby_runtime(retry_attempts=1), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = EmbyAdapter(emby_runtime(retry_attempts=1), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
     assert "down" in res.detail or "ConnectError" in res.detail
 
@@ -174,7 +181,8 @@ async def test_test_happy_path_hits_system_info_with_token(
     client: httpx.AsyncClient,
 ) -> None:
     route = respx.get(INFO).mock(return_value=httpx.Response(200))
-    adapter = EmbyAdapter(emby_runtime(secret="tok-secret"), client)    res = await adapter.test()
+    adapter = EmbyAdapter(emby_runtime(secret="tok-secret"), client)
+    res = await adapter.test()
     assert res.ok is True
     request = route.calls.last.request
     assert request.method == "GET"
@@ -185,7 +193,8 @@ async def test_test_happy_path_hits_system_info_with_token(
 @respx.mock
 async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.get(INFO).mock(return_value=httpx.Response(401))
-    adapter = EmbyAdapter(emby_runtime(), client)    res = await adapter.test()
+    adapter = EmbyAdapter(emby_runtime(), client)
+    res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
 ```
@@ -398,14 +407,18 @@ async def test_trigger_http_error_is_not_ok(
     client: httpx.AsyncClient, status: int
 ) -> None:
     respx.post(REFRESH).mock(return_value=httpx.Response(status))
-    adapter = JellyfinAdapter(jf_runtime(), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = JellyfinAdapter(jf_runtime(), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code == status
 
 
 @respx.mock
 async def test_trigger_transport_error_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.post(REFRESH).mock(side_effect=httpx.ConnectError("down"))
-    adapter = JellyfinAdapter(jf_runtime(retry_attempts=1), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = JellyfinAdapter(jf_runtime(retry_attempts=1), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
 
 
@@ -414,7 +427,8 @@ async def test_test_happy_path_hits_system_info_with_mediabrowser_auth(
     client: httpx.AsyncClient,
 ) -> None:
     route = respx.get(INFO).mock(return_value=httpx.Response(200))
-    adapter = JellyfinAdapter(jf_runtime(secret="tok-secret"), client)    res = await adapter.test()
+    adapter = JellyfinAdapter(jf_runtime(secret="tok-secret"), client)
+    res = await adapter.test()
     assert res.ok is True
     request = route.calls.last.request
     assert request.headers["Authorization"] == 'MediaBrowser Token="tok-secret"'
@@ -424,7 +438,8 @@ async def test_test_happy_path_hits_system_info_with_mediabrowser_auth(
 @respx.mock
 async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.get(INFO).mock(return_value=httpx.Response(401))
-    adapter = JellyfinAdapter(jf_runtime(), client)    res = await adapter.test()
+    adapter = JellyfinAdapter(jf_runtime(), client)
+    res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
 ```

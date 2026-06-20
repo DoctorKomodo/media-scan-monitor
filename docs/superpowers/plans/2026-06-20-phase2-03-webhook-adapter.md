@@ -25,10 +25,11 @@ for safe JSON escaping. This adapter is mode-agnostic (`supported_scan_modes = {
   + `supported_scan_modes`; implement `async trigger`/`async test`. Do not edit
   `servers/{base,registry,http}.py` or any contract type.
 - **Security (contract invariant 3 + CLAUDE.md rule 5):**
-  - The **encrypted** `secret` is exposed to the template context as `secret`, so an operator can
-    inject it into an `Authorization` header (e.g. `{"Authorization": "Bearer {{ secret }}"}`)
-    **without** storing the token in the plaintext `webhook_headers_json` column — the token stays
-    encrypted at rest (`secret_encrypted`).
+  - The `secret` — stored **encrypted at rest** (`secret_encrypted`) and decrypted into memory by the
+    runtime — is exposed to the template context as `secret`, so an operator can inject it into an
+    `Authorization` header (e.g. `{"Authorization": "Bearer {{ secret }}"}`) **without** storing the
+    token in the plaintext `webhook_headers_json` column. (The rendered value sent on the wire is the
+    plaintext token, exactly as the target endpoint requires — what stays encrypted is the at-rest copy.)
   - Never log rendered headers or the rendered body (either may contain the token).
   - Jinja2 **`SandboxedEnvironment`** blocks attribute access / template injection.
 - **JSON safety:** `| tojson` is the documented way to emit valid, escaped JSON for paths containing
@@ -201,7 +202,9 @@ async def test_body_tojson_escapes_special_chars(client: httpx.AsyncClient) -> N
 @respx.mock
 async def test_method_from_config_is_honored(client: httpx.AsyncClient) -> None:
     route = respx.put(URL).mock(return_value=httpx.Response(200))
-    adapter = WebhookAdapter(webhook_runtime(webhook_method="put"), client)    res = await adapter.trigger(library_request())    assert res.ok is True
+    adapter = WebhookAdapter(webhook_runtime(webhook_method="put"), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is True
     assert route.calls.last.request.method == "PUT"
 
 
@@ -214,14 +217,18 @@ async def test_header_value_renders_encrypted_secret(client: httpx.AsyncClient) 
             webhook_headers_json='{"Authorization": "Bearer {{ secret }}"}',
         ),
         client,
-    )    res = await adapter.trigger(library_request())    assert res.ok is True
+    )
+    res = await adapter.trigger(library_request())
+    assert res.ok is True
     request = route.calls.last.request
     assert request.headers["Authorization"] == "Bearer s3cr3t"
     assert "s3cr3t" not in str(request.url)  # secret never in the URL
 
 
 async def test_empty_url_is_error(client: httpx.AsyncClient) -> None:
-    adapter = WebhookAdapter(webhook_runtime(base_url=""), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = WebhookAdapter(webhook_runtime(base_url=""), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
     assert "url" in res.detail.lower()
 
@@ -232,28 +239,36 @@ async def test_dangerous_template_is_rejected_by_sandbox(
     # SandboxedEnvironment blocks attribute access; no HTTP request is made.
     adapter = WebhookAdapter(
         webhook_runtime(webhook_body_template="{{ ''.__class__ }}"), client
-    )    res = await adapter.trigger(library_request())    assert res.ok is False
+    )
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
 
 
 async def test_invalid_headers_json_is_error(client: httpx.AsyncClient) -> None:
     adapter = WebhookAdapter(
         webhook_runtime(webhook_headers_json="not json"), client
-    )    res = await adapter.trigger(library_request())    assert res.ok is False
+    )
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
 
 
 @respx.mock
 async def test_trigger_http_error_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.post(URL).mock(return_value=httpx.Response(404))
-    adapter = WebhookAdapter(webhook_runtime(), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = WebhookAdapter(webhook_runtime(), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code == 404
 
 
 @respx.mock
 async def test_trigger_transport_error_is_not_ok(client: httpx.AsyncClient) -> None:
     respx.post(URL).mock(side_effect=httpx.ConnectError("down"))
-    adapter = WebhookAdapter(webhook_runtime(retry_attempts=1), client)    res = await adapter.trigger(library_request())    assert res.ok is False
+    adapter = WebhookAdapter(webhook_runtime(retry_attempts=1), client)
+    res = await adapter.trigger(library_request())
+    assert res.ok is False
     assert res.status_code is None
 
 
@@ -262,7 +277,8 @@ async def test_test_sends_probe_and_reports_reachable(
     client: httpx.AsyncClient,
 ) -> None:
     route = respx.post(URL).mock(return_value=httpx.Response(200))
-    adapter = WebhookAdapter(webhook_runtime(), client)    res = await adapter.test()
+    adapter = WebhookAdapter(webhook_runtime(), client)
+    res = await adapter.test()
     assert res.ok is True
     assert route.call_count == 1
 
@@ -270,7 +286,8 @@ async def test_test_sends_probe_and_reports_reachable(
 @respx.mock
 async def test_test_failure_reports_status(client: httpx.AsyncClient) -> None:
     respx.post(URL).mock(return_value=httpx.Response(500))
-    adapter = WebhookAdapter(webhook_runtime(retry_attempts=1), client)    res = await adapter.test()
+    adapter = WebhookAdapter(webhook_runtime(retry_attempts=1), client)
+    res = await adapter.test()
     assert res.ok is False
     assert "500" in res.detail
 ```
@@ -299,11 +316,11 @@ Server row:
 
 SECURITY:
   * Header VALUES and the body are rendered through a Jinja2 SandboxedEnvironment
-    with the SAME context, so an operator can inject the ENCRYPTED ``secret`` into
-    an Authorization header, e.g. {"Authorization": "Bearer {{ secret }}"}, WITHOUT
+    with the SAME context, so an operator can inject the ``secret`` into an
+    Authorization header, e.g. {"Authorization": "Bearer {{ secret }}"}, WITHOUT
     storing the token in the plaintext webhook_headers_json column. The token stays
-    encrypted at rest (secret_encrypted) and is never logged (we never log rendered
-    headers or body).
+    encrypted at rest (secret_encrypted) — decrypted only in memory at render time —
+    and is never logged (we never log rendered headers or body).
   * SandboxedEnvironment blocks attribute access / template injection.
   * ``| tojson`` emits valid, escaped JSON for paths with quotes/backslashes.
 
