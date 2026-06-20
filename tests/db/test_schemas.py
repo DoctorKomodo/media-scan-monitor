@@ -37,6 +37,10 @@ def test_server_update_tracks_only_set_fields() -> None:
 
     assert ServerUpdate().model_dump(exclude_unset=True) == {}
 
+    # explicit secret=None is distinct from omitting it: it clears the stored credential
+    cleared = ServerUpdate(secret=None)
+    assert cleared.model_dump(exclude_unset=True) == {"secret": None}
+
 
 def test_folder_create_defaults() -> None:
     f = FolderCreate(path="/data/tv")

@@ -36,7 +36,9 @@ class ServerUpdate(BaseModel):
     base_url: str | None = None
     verify_tls: bool | None = None
     timeout_seconds: float | None = None
-    secret: str | None = None  # plaintext; if set, re-encrypted by the repo
+    # plaintext secret tri-state via exclude_unset: a str re-encrypts; explicit None clears
+    # the stored secret; omitting the field entirely leaves secret_encrypted unchanged.
+    secret: str | None = None
     scan_mode: ScanMode | None = None
     debounce_mode: DebounceMode | None = None
     debounce_window_seconds: int | None = None
