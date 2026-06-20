@@ -17,10 +17,11 @@ NOT use asyncinotify's `add_watch(recursive=True)`: per-directory control is
 required for the watch-limit gate and for the attach-race rescan.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mediascanmonitor.normalize import normalize_path
 from mediascanmonitor.pipeline.events import FsEvent, FsEventType
@@ -71,6 +72,8 @@ class InotifyBackend:
         self._add_mask = Mask.CREATE | Mask.MOVED_TO | Mask.DELETE | Mask.MOVED_FROM
         self._watches: dict[str, Watch] = {}
         self._roots: set[str] = set()
+        self._closing = False
+        self._get_task: asyncio.Task[Any] | None = None
 
     # -- internal watch bookkeeping -----------------------------------------
     def _is_ignored(self, path: str) -> bool:
@@ -136,7 +139,24 @@ class InotifyBackend:
         self._roots = new_roots
 
     async def events(self) -> AsyncIterator[FsEvent]:
-        async for event in self._inotify:
+        # Race each inotify read against cancellation so aclose() can stop a
+        # *suspended* read: asyncinotify's get() waits on the fd forever and its
+        # close() does NOT interrupt a pending get(), so without this the engine's
+        # consume loop would hang on shutdown. aclose() sets _closing and cancels
+        # the in-flight read, which lands here as a clean return.
+        while True:
+            get_task = asyncio.ensure_future(self._inotify.get())
+            self._get_task = get_task
+            try:
+                event = await get_task
+            except asyncio.CancelledError:
+                if self._closing:
+                    return  # clean shutdown: aclose() cancelled the suspended read
+                raise
+            finally:
+                self._get_task = None
+                if not get_task.done():
+                    get_task.cancel()  # GeneratorExit/early exit: drop the orphan read
             mask = int(event.mask)
             if mask & IN_Q_OVERFLOW:
                 # Kernel dropped events (queue overflow). Re-attach watches across all
@@ -177,5 +197,8 @@ class InotifyBackend:
             yield FsEvent(path, event_type, is_dir=is_dir)
 
     async def aclose(self) -> None:
+        self._closing = True
+        if self._get_task is not None and not self._get_task.done():
+            self._get_task.cancel()  # interrupt a suspended events() read so it returns
         self._inotify.close()
         self._watches.clear()
