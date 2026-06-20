@@ -1,10 +1,28 @@
 """Tests for config/runtime.py — runtime snapshot dataclasses + builder."""
 
 import dataclasses
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
 
 import pytest
-from mediascanmonitor.config.runtime import FolderRoute, RuntimeConfig, ServerRuntime
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+
+from mediascanmonitor.config.runtime import (
+    FolderRoute,
+    RuntimeConfig,
+    ServerRuntime,
+    build_runtime_config,
+)
+from mediascanmonitor.db.models import (
+    DebounceMode,
+    FileType,
+    Folder,
+    ScanMode,
+    Server,
+    ServerType,
+)
+
+if TYPE_CHECKING:
+    from mediascanmonitor.db.repo import Repo
 
 
 def test_server_runtime_fields_frozen_slotted() -> None:
@@ -50,7 +68,7 @@ def test_server_runtime_secret_excluded_from_repr() -> None:
         webhook_body_template=None,
     )
     assert "super-secret-token" not in repr(sr)  # invariant 3: never in a repr
-    assert sr.secret == "super-secret-token"      # still reachable by attribute
+    assert sr.secret == "super-secret-token"  # still reachable by attribute
 
 
 def test_folder_route_fields_frozen_slotted() -> None:
@@ -107,16 +125,6 @@ def test_runtime_config_fields_frozen_slotted() -> None:
     assert not hasattr(cfg, "__dict__")
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.routes = ()  # type: ignore[misc]
-
-
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
-
-from mediascanmonitor.config.runtime import build_runtime_config
-from mediascanmonitor.db.models import FileType, Folder, Server
-
-if TYPE_CHECKING:
-    from mediascanmonitor.db.repo import Repo
 
 
 @dataclass
@@ -185,9 +193,7 @@ def make_folder(
         library_id=library_id,
         enabled=enabled,
     )
-    folder.filetypes = [
-        FileType(id=None, folder_id=folder_id, extension=ext) for ext in extensions
-    ]
+    folder.filetypes = [FileType(id=None, folder_id=folder_id, extension=ext) for ext in extensions]
     return folder
 
 

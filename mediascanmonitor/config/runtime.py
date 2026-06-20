@@ -7,8 +7,8 @@ into ``ServerRuntime.secret`` here (in memory only) — adapters receive plainte
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
 from mediascanmonitor.config.defaults import IGNORE_DIRS
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ class ServerRuntime:
     base_url: str
     verify_tls: bool
     timeout_seconds: float
-    secret: str | None = field(repr=False)   # decrypted plaintext; excluded from repr (invariant 3)
+    secret: str | None = field(repr=False)  # decrypted plaintext; excluded from repr (invariant 3)
     scan_mode: ScanMode
     debounce_mode: DebounceMode
     debounce_window_seconds: int
@@ -37,17 +37,17 @@ class ServerRuntime:
 class FolderRoute:
     server_id: int
     server_name: str
-    path: str                  # watched folder root (normalized, no trailing slash)
-    extensions: frozenset[str] # normalized; EMPTY SET MEANS "match all extensions"
+    path: str  # watched folder root (normalized, no trailing slash)
+    extensions: frozenset[str]  # normalized; EMPTY SET MEANS "match all extensions"
     library_id: str | None
     scan_mode: ScanMode
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
-    watch_paths: frozenset[str]          # dedup union of enabled folder paths
-    routes: tuple[FolderRoute, ...]      # one per enabled (server, folder)
-    servers: dict[int, ServerRuntime]    # by server_id (enabled only)
+    watch_paths: frozenset[str]  # dedup union of enabled folder paths
+    routes: tuple[FolderRoute, ...]  # one per enabled (server, folder)
+    servers: dict[int, ServerRuntime]  # by server_id (enabled only)
     ignore_dirs: frozenset[str]
 
 
