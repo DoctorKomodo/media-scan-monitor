@@ -69,8 +69,9 @@ these names in the Phase 3 UI help text:
 | `secret` | the decrypted secret (empty string if unset) — for injecting auth into a header |
 
 > **Deferred (not in Phase 2):** `remote_path` (host→consumer path remapping). The data model carries
-> no mapping field yet, so `host_path` is the only path var. Tracked in
-> [`docs/FOLLOWUPS.md`](../../FOLLOWUPS.md) for Phase 3.
+> no mapping field yet, so `host_path` (the watcher's container bind-mount path) is the only path var.
+> Tracked in [`docs/FOLLOWUPS.md`](../../FOLLOWUPS.md) as unscheduled — `docs/PLAN.md` keeps path
+> mapping as an architecture-validation exercise not assigned to any phase.
 
 ## File structure (what this plan builds)
 

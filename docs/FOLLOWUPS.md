@@ -8,8 +8,6 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 - [ ] `Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery — Phase 1 consults the
       gate only in `start()`. → 06 design-decision #7; contract §10
-- [ ] Webhook `remote_path` template var (host→consumer path remapping) — Phase 2 exposes only
-      `host_path` (no mapping field in the data model). → phase2-03 webhook plan
 - [ ] Require a token when saving an auth-required server (Emby/Jellyfin/Audiobookshelf/Plex). The
       Phase 2 adapters fall back to an empty credential (`Bearer `/`X-Emby-Token: ""`/`Token=""`) when
       `secret is None`, so a tokenless save fails late with a backend `401` instead of being rejected
@@ -24,6 +22,16 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       (`{libraryId,path,type}`, ABS ≥2.9.0 — note reliability bug advplyr/audiobookshelf#3018).
       Adding it = extend each adapter's `supported_scan_modes` with `targeted` + a path-targeted
       `trigger()` branch; the UI then offers the mode. → phase2-README convention 2
+
+## Unscheduled — exploratory (not assigned to any phase)
+
+- [ ] Path mapping (host→consumer path remapping), incl. the webhook `remote_path` template var.
+      The watcher sees the **container's bind-mount path** (e.g. `/data/media/...`); a consumer may
+      mount the same content elsewhere (e.g. a Windows Plex wanting `\\nas\media\...`). Phase 2's
+      webhook exposes only `host_path` (the watcher's path); there is no mapping field in the data
+      model yet. The design treats this as an architecture-validation exercise, **explicitly not
+      scheduled into any phase** — promote it to a phase only on an actual request. → docs/PLAN.md
+      "Appendix — Architecture validation: path mapping (NOT scheduled; exploration only)"
 
 ## Phase 4 — observability & image
 
