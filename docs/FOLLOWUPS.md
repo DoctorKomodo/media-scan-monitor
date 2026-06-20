@@ -10,6 +10,11 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       gate only in `start()`. → 06 design-decision #7; contract §10
 - [ ] Webhook `remote_path` template var (host→consumer path remapping) — Phase 2 exposes only
       `host_path` (no mapping field in the data model). → phase2-03 webhook plan
+- [ ] Require a token when saving an auth-required server (Emby/Jellyfin/Audiobookshelf/Plex). The
+      Phase 2 adapters fall back to an empty credential (`Bearer `/`X-Emby-Token: ""`/`Token=""`) when
+      `secret is None`, so a tokenless save fails late with a backend `401` instead of being rejected
+      at the form. Validate at the schema/UI boundary so the bad state can't be saved. Webhook is
+      exempt — its `secret` is genuinely optional. → phase2-01/02 adapters; flagged in final review
 
 ## Later — targeted scans for the non-Plex backends
 
