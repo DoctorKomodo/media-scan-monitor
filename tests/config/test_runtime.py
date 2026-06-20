@@ -229,3 +229,85 @@ def test_build_runtime_config_happy_path() -> None:
     # Watch set is the normalized path; ignore dirs come from defaults.
     assert cfg.watch_paths == frozenset({"/data/media/tv"})
     assert "@eaDir" in cfg.ignore_dirs
+
+
+def test_disabled_server_excluded() -> None:
+    enabled = make_server(1, name="plex-on", enabled=True)
+    disabled = make_server(2, name="plex-off", enabled=False)
+    repo = FakeRepo(
+        servers=[enabled, disabled],
+        folders_by_server={
+            1: [make_folder(10, server_id=1, path="/data/tv", library_id="2", extensions=["mkv"])],
+            2: [make_folder(20, server_id=2, path="/data/off", library_id="9", extensions=["mkv"])],
+        },
+        secrets={1: "tok1", 2: "tok2"},
+    )
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert set(cfg.servers) == {1}
+    assert all(r.server_id == 1 for r in cfg.routes)
+    assert cfg.watch_paths == frozenset({"/data/tv"})
+    assert "/data/off" not in cfg.watch_paths
+
+
+def test_disabled_folder_excluded() -> None:
+    server = make_server(1, name="plex-main")
+    on = make_folder(10, server_id=1, path="/data/tv", library_id="2", extensions=["mkv"])
+    off = make_folder(
+        11, server_id=1, path="/data/hidden", library_id="3", extensions=["mkv"], enabled=False
+    )
+    repo = FakeRepo(servers=[server], folders_by_server={1: [on, off]}, secrets={1: "tok"})
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert cfg.watch_paths == frozenset({"/data/tv"})
+    assert [r.path for r in cfg.routes] == ["/data/tv"]
+
+
+def test_watch_paths_dedup_two_folders_same_path() -> None:
+    # Two servers watch the SAME host path -> one watch path, two routes.
+    s1 = make_server(1, name="plex")
+    s2 = make_server(2, name="emby", type=ServerType.emby, scan_mode=ScanMode.library)
+    repo = FakeRepo(
+        servers=[s1, s2],
+        folders_by_server={
+            1: [make_folder(10, server_id=1, path="/data/tv/", library_id="2", extensions=["mkv"])],
+            2: [make_folder(20, server_id=2, path="/data/tv", library_id="5", extensions=["mkv"])],
+        },
+        secrets={1: "a", 2: "b"},
+    )
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert cfg.watch_paths == frozenset({"/data/tv"})
+    assert len(cfg.routes) == 2
+    assert {r.server_id for r in cfg.routes} == {1, 2}
+
+
+def test_empty_filetypes_means_all_extensions() -> None:
+    server = make_server(1, name="plex-main")
+    folder = make_folder(10, server_id=1, path="/data/tv", library_id="2", extensions=[])
+    repo = FakeRepo(servers=[server], folders_by_server={1: [folder]}, secrets={1: "tok"})
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert cfg.routes[0].extensions == frozenset()
+
+
+def test_secret_none_when_unresolved() -> None:
+    server = make_server(1, name="plex-main")
+    folder = make_folder(10, server_id=1, path="/data/tv", library_id="2", extensions=["mkv"])
+    repo = FakeRepo(servers=[server], folders_by_server={1: [folder]}, secrets={})
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert cfg.servers[1].secret is None
+
+
+def test_empty_repo_yields_empty_config() -> None:
+    cfg = build_runtime_config(cast("Repo", FakeRepo()))
+    assert cfg.servers == {}
+    assert cfg.routes == ()
+    assert cfg.watch_paths == frozenset()
+    assert "@eaDir" in cfg.ignore_dirs
