@@ -17,9 +17,7 @@ IDENTITY = f"{BASE}/identity"
 
 def test_plex_class_metadata() -> None:
     assert PlexAdapter.server_type is ServerType.plex
-    assert PlexAdapter.supported_scan_modes == frozenset(
-        {ScanMode.targeted, ScanMode.library}
-    )
+    assert PlexAdapter.supported_scan_modes == frozenset({ScanMode.targeted, ScanMode.library})
 
 
 def test_plex_is_registered() -> None:
@@ -93,9 +91,7 @@ async def test_trigger_success_classification(client: httpx.AsyncClient) -> None
 
 @respx.mock
 @pytest.mark.parametrize("status", [401, 404])
-async def test_trigger_http_error_is_not_ok(
-    client: httpx.AsyncClient, status: int
-) -> None:
+async def test_trigger_http_error_is_not_ok(client: httpx.AsyncClient, status: int) -> None:
     respx.get(REFRESH).mock(return_value=httpx.Response(status))
     adapter = PlexAdapter(make_plex_runtime(), client)
     res = await adapter.trigger(make_scan_request())

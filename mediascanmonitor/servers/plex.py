@@ -57,9 +57,7 @@ class PlexAdapter(ServerAdapter):
                 headers=self._headers(),
             )
         except httpx.HTTPError as exc:
-            return TriggerResult(
-                ok=False, status_code=None, detail=f"{type(exc).__name__}: {exc}"
-            )
+            return TriggerResult(ok=False, status_code=None, detail=f"{type(exc).__name__}: {exc}")
         if resp.is_success:
             return TriggerResult(
                 ok=True, status_code=resp.status_code, detail="Plex scan triggered"

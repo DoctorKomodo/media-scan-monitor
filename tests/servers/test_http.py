@@ -40,9 +40,7 @@ async def test_build_client_accepts_verify_false() -> None:
 @respx.mock
 async def test_retries_on_503_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(http, "_async_sleep", _instant)
-    route = respx.get(URL).mock(
-        side_effect=[httpx.Response(503), httpx.Response(200)]
-    )
+    route = respx.get(URL).mock(side_effect=[httpx.Response(503), httpx.Response(200)])
     async with httpx.AsyncClient() as client:
         resp = await http.request_with_retry(client, "GET", URL, attempts=3)
     assert resp.status_code == 200
@@ -76,9 +74,7 @@ async def test_retries_transport_error_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(http, "_async_sleep", _instant)
-    route = respx.get(URL).mock(
-        side_effect=[httpx.ConnectError("boom"), httpx.Response(200)]
-    )
+    route = respx.get(URL).mock(side_effect=[httpx.ConnectError("boom"), httpx.Response(200)])
     async with httpx.AsyncClient() as client:
         resp = await http.request_with_retry(client, "GET", URL, attempts=3)
     assert resp.status_code == 200

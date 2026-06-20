@@ -29,6 +29,11 @@ class TriggerResult:
 class TestResult:
     """Outcome of a connectivity/auth probe (test())."""
 
+    # Tell pytest this is not a test class despite the ``Test`` prefix (it is a
+    # contract-mandated name). Not a dataclass field — no annotation — so it does
+    # not affect ``__init__``/slots/eq; purely a collection-opt-out marker.
+    __test__ = False
+
     ok: bool
     detail: str
 
