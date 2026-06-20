@@ -95,9 +95,12 @@ mediascanmonitor/
   collapse a burst keyed per `(server_id, scan_key)` into one trigger (media-server default).
 - **Live reconfiguration:** UI writes commit to SQLite and call `engine.rebuild()`, which diffs
   the watch set (add/remove watches) and swaps the routing table — no restart.
-- **Scan targeting asymmetry:** only Plex does native folder-targeted scans (`?path=`); Emby/
-  Jellyfin/Audiobookshelf refresh a whole library. Each adapter declares its supported
-  `scan_mode`s; the UI only offers valid ones.
+- **Scan targeting:** Plex gets native folder-targeted scans (`?path=`). Emby, Jellyfin, and
+  Audiobookshelf *also* expose path-targeted notification endpoints (Emby/Jellyfin
+  `POST /Library/Media/Updated`, Audiobookshelf `POST /api/watcher/update`), but their adapters
+  **deliberately do a whole-library refresh for now** — per-folder targeting for them is a deferred
+  enhancement, not an API limitation (see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)). Each adapter
+  declares its supported `scan_mode`s; the UI only offers valid ones.
 
 ---
 

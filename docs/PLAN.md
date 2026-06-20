@@ -392,8 +392,11 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
    render secrets in forms (set/unset + replace-only); keep Plex token out of logged URLs.
 7. **One process vs two** — single process is simplest (default); isolate the engine as a
    supervised task and offer `--no-web` for separation.
-8. **Targeted-scan asymmetry** — only Plex (and an optional Emby/Jellyfin plugin) does folder
-   targeting; others do library refresh. UI offers only valid `scan_mode`s and explains it.
+8. **Targeted-scan scope** — Plex does folder targeting natively (`?path=`). Emby/Jellyfin
+   (`POST /Library/Media/Updated`) and Audiobookshelf (`POST /api/watcher/update`) also support
+   path-targeted notifications, but the initial adapters deliberately do a library refresh;
+   per-folder targeting for them is deferred (`docs/FOLLOWUPS.md`). UI offers only valid
+   `scan_mode`s and explains it.
 
 ---
 

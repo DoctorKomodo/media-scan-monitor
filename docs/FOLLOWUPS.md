@@ -9,6 +9,15 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 - [ ] `Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery — Phase 1 consults the
       gate only in `start()`. → 06 design-decision #7; contract §10
 
+## Later — targeted scans for the non-Plex backends
+
+- [ ] Per-folder targeted scans for Emby/Jellyfin/Audiobookshelf (Phase 2 ships library-refresh
+      only, by deliberate choice). Verified endpoints: Emby/Jellyfin `POST /Library/Media/Updated`
+      (`{Updates:[{Path,UpdateType}]}`); Audiobookshelf `POST /api/watcher/update`
+      (`{libraryId,path,type}`, ABS ≥2.9.0 — note reliability bug advplyr/audiobookshelf#3018).
+      Adding it = extend each adapter's `supported_scan_modes` with `targeted` + a path-targeted
+      `trigger()` branch; the UI then offers the mode. → phase2-README convention 2
+
 ## Phase 4 — observability & image
 
 - [ ] Verify `mediascanmonitor/migrations/` (incl. `script.py.mako` + `versions/*.py`) ships in

@@ -50,8 +50,10 @@ inotify watcher ──> router ──> per-server debounce ──> dispatcher �
 - **Per-server debounce:** `trailing` collapses a burst per `(server, scan target)` into one
   trigger after the folder settles (media-server default); `off` delivers every event (good for a
   generic webhook).
-- **Scan targeting:** only Plex does native folder-targeted scans (`?path=`); Emby/Jellyfin/
-  Audiobookshelf refresh a whole library. Each adapter declares which scan modes it supports.
+- **Scan targeting:** Plex does native folder-targeted scans (`?path=`). Emby, Jellyfin, and
+  Audiobookshelf can also target a path (via their media-updated / watcher-update endpoints), but
+  for now their adapters trigger a whole-library refresh; per-folder targeting for them is a planned
+  enhancement. Each adapter declares which scan modes it supports.
 - **inotify watch limit:** per-directory watches consume the kernel
   `fs.inotify.max_user_watches` budget. A startup gate measures what the config needs versus the
   current limit and blocks (with a clear remediation message) rather than silently under-watching.

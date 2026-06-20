@@ -60,11 +60,15 @@ There is no ordering constraint *between* 01/02/03; the numbering is just a reco
 1. **Frozen contract, consumed not changed.** Adapters set the two `ClassVar`s
    (`server_type`, `supported_scan_modes`) and implement `async trigger`/`async test`. Nothing in
    `servers/{base,registry,http}.py` or the contract types is edited.
-2. **Library-refresh only for the media servers.** Emby/Jellyfin/Audiobookshelf declare
-   `supported_scan_modes = frozenset({ScanMode.library})` — only Plex does native path targeting.
-   Their `trigger()` ignores `req.scan_path` and refreshes by `req.library_id`. `library_id` is used
-   **as configured** — runtime library *discovery* (e.g. Jellyfin `GET /Library/VirtualFolders`) is
-   a Phase 3 UI concern and is **not** in the frozen ABC; see [`docs/FOLLOWUPS.md`](../../FOLLOWUPS.md).
+2. **Library-refresh only for the media servers — by deliberate choice, not an API limit.**
+   Emby/Jellyfin/Audiobookshelf declare `supported_scan_modes = frozenset({ScanMode.library})` and
+   refresh by `req.library_id`, ignoring `req.scan_path`. These backends *do* expose path-targeted
+   endpoints (Emby/Jellyfin `POST /Library/Media/Updated` with `{Updates:[{Path,UpdateType}]}`;
+   Audiobookshelf `POST /api/watcher/update` with `{libraryId,path,type}`, ABS ≥2.9.0), but
+   per-folder targeting for these three is **deferred to a later phase** (see
+   [`docs/FOLLOWUPS.md`](../../FOLLOWUPS.md)) — Phase 2 ships the simpler whole-library refresh.
+   `library_id` is used **as configured** — runtime library *discovery* (e.g. Jellyfin
+   `GET /Library/VirtualFolders`) is a Phase 3 UI concern and is **not** in the frozen ABC.
 3. **Verify API endpoints at implement-time (rule 1, no trusting memory).** The scan/refresh paths
    and the `test()` probe endpoints below are the documented choices, but each task instructs the
    implementer to **confirm the path + auth header + a 2xx response shape against the backend's
