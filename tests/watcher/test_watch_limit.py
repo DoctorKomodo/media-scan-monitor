@@ -49,8 +49,50 @@ def test_count_dirs_sums_multiple_roots(tmp_path: Path) -> None:
     (tmp_path / "r2").mkdir()
 
     # r1 + r1/sub = 2 ; r2 = 1 ; total 3
-    count = watch_limit.count_dirs(
-        [str(tmp_path / "r1"), str(tmp_path / "r2")], frozenset()
-    )
+    count = watch_limit.count_dirs([str(tmp_path / "r1"), str(tmp_path / "r2")], frozenset())
 
     assert count == 3
+
+
+def test_check_watch_limit_ok_with_headroom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # one dir to watch (the root); default headroom 1.2 -> needed = ceil(1*1.2) = 2
+    monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 100)
+
+    status = watch_limit.check_watch_limit([str(tmp_path)], frozenset())
+
+    assert status.current == 100
+    assert status.dirs == 1  # raw dir count
+    assert status.needed == 2  # ceil(1 * 1.2)
+    assert status.recommended == 3  # ceil(2 * 1.2)
+    assert status.ok is True
+
+
+def test_check_watch_limit_not_ok_when_below_headroom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Build 100 directories under the root: raw dir count = 101 (root + 100).
+    for i in range(100):
+        (tmp_path / f"d{i}").mkdir()
+    # headroom 1.2 -> needed = ceil(101*1.2) = ceil(121.2) = 122 ; 121 is below it.
+    monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 121)
+
+    status = watch_limit.check_watch_limit([str(tmp_path)], frozenset())
+
+    assert status.dirs == 101
+    assert status.needed == 122
+    assert status.ok is False  # 121 < 122
+
+
+def test_check_watch_limit_ok_exactly_at_headroom_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # raw dir count = 1 (root only) ; headroom 2.0 -> needed = ceil(2.0) = 2 ; limit 2 is OK.
+    monkeypatch.setattr(watch_limit, "read_max_user_watches", lambda: 2)
+
+    status = watch_limit.check_watch_limit([str(tmp_path)], frozenset(), headroom=2.0)
+
+    assert status.dirs == 1
+    assert status.needed == 2
+    assert status.ok is True  # 2 >= 2
