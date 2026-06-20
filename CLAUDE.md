@@ -132,6 +132,28 @@ pytest                    # tests
 
 CI runs all four on every push/PR (`.github/workflows/ci.yml`). Keep it green.
 
+### Lint & style conventions (read before pasting code from a plan)
+
+Implementation plans contain hand-written code blocks; treat them as **semantically**
+authoritative but **formatting**-advisory. After pasting plan code, normalize it before
+asserting "clean": run `ruff format` then `ruff check --fix` on the touched files, then the
+real gate. The recurring gotchas, fix them at the source:
+
+- **Enums subclass `StrEnum`, never `(str, Enum)`** — `(str, Enum)` trips ruff `UP042`, and
+  `StrEnum` is the project-wide convention (`db/models.py`, `pipeline/events.py`,
+  `engine.py`). Behaviour is equivalent except `str(member)` is the bare value (no
+  `ClassName.` prefix); prefer `.value` when you want the bare string regardless.
+- **Ruff `select` is exactly `E, F, I, UP, B, C4, SIM, RUF`** (per-file-ignore: `B` under
+  `tests/**`). A `# noqa` for any **other** rule (e.g. `SLF001`, `BLE001`) is *unused* and
+  trips `RUF100` — don't add them. `# noqa: F401` on a self-registration import **is** valid
+  (F is selected) and should stay.
+- **`mediascanmonitor` is first-party for isort** — separate third-party from first-party
+  imports with a blank line, or `ruff check` reports `I001` (autofixable).
+- **`try/except: pass` → `contextlib.suppress(...)`** (ruff `SIM105`); keep any explanatory
+  comment by putting it above the `with`.
+- **PEP 649**: never add `from __future__ import annotations`; leave forward refs unquoted
+  (see rule 3 above for the runtime-introspection caveat).
+
 ---
 
 ## Deployment (target shape; built out across phases)

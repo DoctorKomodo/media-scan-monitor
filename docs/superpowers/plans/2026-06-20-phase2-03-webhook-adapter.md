@@ -349,8 +349,9 @@ class WebhookAdapter(ServerAdapter):
 
     def _context(self, req: ScanRequest) -> dict[str, Any]:
         return {
-            # FsEventType is (str, Enum) not StrEnum: .value gives "created",
-            # whereas str() would give "FsEventType.created".
+            # Use .value for the bare event name ("created"). FsEventType is a
+            # StrEnum, so str(member) is also "created" — .value is explicit and
+            # stays correct regardless of the enum base.
             "event_type": req.event_type.value,
             "file_path": req.file_path,
             "host_path": req.file_path,
