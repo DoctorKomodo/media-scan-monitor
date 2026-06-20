@@ -15,3 +15,4 @@ from mediascanmonitor.servers import (
 from mediascanmonitor.servers import emby as _emby  # noqa: F401  (registration side effect)
 from mediascanmonitor.servers import jellyfin as _jellyfin  # noqa: F401  (registration side effect)
 from mediascanmonitor.servers import plex as _plex  # noqa: F401  (registration side effect)
+from mediascanmonitor.servers import webhook as _webhook  # noqa: F401  (registration side effect)
