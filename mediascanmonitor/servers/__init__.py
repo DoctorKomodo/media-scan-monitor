@@ -6,3 +6,7 @@ plus a registry entry plus tests; nothing in the watcher or pipeline changes.
 Populated in Phase 1 (`base`, `registry`, `http`, `plex`) and Phase 2
 (`emby`, `jellyfin`, `audiobookshelf`, `webhook`).
 """
+
+# Importing the concrete adapter modules triggers their @register decorators so
+# create_adapter() can find them. Add one line here per new server type.
+from mediascanmonitor.servers import plex as _plex  # noqa: F401  (registration side effect)
