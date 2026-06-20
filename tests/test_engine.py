@@ -1,6 +1,7 @@
 """Engine wiring, rebuild, atomicity, and shutdown tests (sub-plan 06)."""
 
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -260,3 +261,100 @@ async def test_unsupported_server_is_skipped_not_fatal(
     assert set(created) == {1}  # server 2 skipped; server 1 built
     assert len(created[1].calls) == 1  # server 1 still dispatches
     await engine.aclose()
+
+
+async def test_rebuild_adds_then_removes_roots_and_reroutes(
+    monkeypatch: pytest.MonkeyPatch, stub_repo: Repo
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    tv = make_route(1, name="plex", path="/data/tv", library_id="2")
+    movies = make_route(1, name="plex", path="/data/movies", library_id="1")
+
+    holder = SimpleNamespace(current=make_config([tv], [server]))
+    monkeypatch.setattr(engine_module, "build_runtime_config", lambda repo: holder.current)
+
+    watcher = FakeWatcher()
+    engine = Engine(stub_repo, watcher=watcher)
+    start_task = asyncio.create_task(engine.start())
+    await wait_for(lambda: bool(watcher.roots_history))
+    assert watcher.current_roots == {"/data/tv"}
+
+    # --- add a second folder, rebuild -> union grows ---
+    holder.current = make_config([tv, movies], [server])
+    await engine.rebuild()
+    assert watcher.current_roots == {"/data/tv", "/data/movies"}
+
+    await watcher.emit(
+        FsEvent(path="/data/movies/Dune/d.mkv", event_type=FsEventType.created, is_dir=False)
+    )
+    await wait_for(lambda: any(c.scan_path == "/data/movies/Dune" for c in created[1].calls))
+
+    # --- remove the original folder, rebuild -> root drops, no more routing there ---
+    holder.current = make_config([movies], [server])
+    await engine.rebuild()
+    assert watcher.current_roots == {"/data/movies"}
+
+    before = len(created[1].calls)
+    await watcher.emit(
+        FsEvent(path="/data/tv/Shoresy/ep1.mkv", event_type=FsEventType.created, is_dir=False)
+    )
+    # Give the loop ample chances; the removed root must produce NO new dispatch.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert len(created[1].calls) == before
+
+    await engine.aclose()
+    await start_task
+
+
+async def test_rebuild_closes_old_clients_and_swaps_adapters(
+    monkeypatch: pytest.MonkeyPatch, stub_repo: Repo
+) -> None:
+    created: list[RecordingAdapter] = []
+    clients: list[FakeClient] = []
+
+    def fake_create_adapter(server: object, client: object) -> RecordingAdapter:
+        adapter = RecordingAdapter(
+            cast("engine_module.ServerRuntime", server),  # type: ignore[attr-defined]
+            cast("engine_module.httpx.AsyncClient", client),  # type: ignore[attr-defined]
+        )
+        created.append(adapter)
+        return adapter
+
+    def fake_build_client(**_: object) -> FakeClient:
+        client = FakeClient()
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(engine_module, "create_adapter", fake_create_adapter)
+    monkeypatch.setattr(engine_module, "build_client", fake_build_client)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    tv = make_route(1, name="plex", path="/data/tv", library_id="2")
+    holder = SimpleNamespace(current=make_config([tv], [server]))
+    monkeypatch.setattr(engine_module, "build_runtime_config", lambda repo: holder.current)
+
+    watcher = FakeWatcher()
+    engine = Engine(stub_repo, watcher=watcher)
+    start_task = asyncio.create_task(engine.start())
+    await wait_for(lambda: bool(watcher.roots_history))
+
+    assert len(clients) == 1  # one client built at start
+    await engine.rebuild()
+    assert len(clients) == 2  # a fresh client built on rebuild
+    assert clients[0].closed is True  # the OLD client was closed after the swap
+    assert clients[1].closed is False
+    assert len(created) == 2  # adapters rebuilt
+
+    await engine.aclose()
+    await start_task
+    assert clients[1].closed is True
+
+
+async def test_rebuild_before_start_raises(stub_repo: Repo) -> None:
+    engine = Engine(stub_repo, watcher=FakeWatcher())
+    with pytest.raises(RuntimeError, match="before start"):
+        await engine.rebuild()

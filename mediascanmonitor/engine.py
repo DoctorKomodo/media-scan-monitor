@@ -115,6 +115,49 @@ class Engine:
         self.state = EngineState.stopped
         log.info("engine.closed")
 
+    async def rebuild(self) -> None:
+        """Rebuild the runtime snapshot and atomically swap it in — no restart.
+
+        The DB read (``to_thread``) and old-client teardown (``aclose``) bracket a
+        fully synchronous swap block, so no awaitable point splits a routing
+        decision: every in-flight event uses one consistent snapshot.
+        """
+        if (
+            not self._started
+            or self._dispatcher is None
+            or self._debouncer is None
+            or self._watcher is None
+        ):
+            raise RuntimeError("Engine.rebuild() called before start()")
+
+        async with self._lock:
+            new_config = await asyncio.to_thread(build_runtime_config, self._repo)
+            new_adapters, new_clients = await self._build_adapters(new_config)
+
+            old_clients = self._clients
+            old_paths = self._config.watch_paths if self._config else frozenset()
+            new_paths = new_config.watch_paths
+
+            # --- atomic swap (NO await between these statements) -------------
+            self._dispatcher.set_adapters(new_adapters)
+            self._debouncer.update_servers(new_config.servers)
+            self._config = new_config
+            self._clients = new_clients
+            self._watcher.set_roots(set(new_paths))
+            # ----------------------------------------------------------------
+
+            log.info(
+                "engine.rebuilt",
+                added=sorted(new_paths - old_paths),
+                removed=sorted(old_paths - new_paths),
+                servers=len(new_config.servers),
+                routes=len(new_config.routes),
+            )
+
+            # Safe to await now: new requests already use new adapters/clients.
+            for client in old_clients.values():
+                await client.aclose()
+
     # -- internals -----------------------------------------------------------
 
     async def _build_adapters(
