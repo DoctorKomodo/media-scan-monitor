@@ -8,6 +8,8 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 - [ ] `Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery — Phase 1 consults the
       gate only in `start()`. → 06 design-decision #7; contract §10
+- [ ] Webhook `remote_path` template var (host→consumer path remapping) — Phase 2 exposes only
+      `host_path` (no mapping field in the data model). → phase2-03 webhook plan
 
 ## Later — targeted scans for the non-Plex backends
 
