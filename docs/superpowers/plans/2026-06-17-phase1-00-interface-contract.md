@@ -297,7 +297,7 @@ A `Repo` is therefore built as `Repo(session_factory(init_db(db_path)), box)` (s
 ## 5. Domain event/request types (`mediascanmonitor/pipeline/events.py`) — owned by sub-plan 02
 
 ```python
-class FsEventType(str, Enum):
+class FsEventType(StrEnum):    # StrEnum per §"Enums subclass StrEnum"; ruff UP042
     created = "created"        # inotify CREATE
     moved_to = "moved_to"      # inotify MOVED_TO
     deleted = "deleted"        # inotify DELETE
@@ -548,7 +548,7 @@ class Dispatcher:
 def configure_logging(*, json_logs: bool = True, level: str = "INFO") -> None: ...  # structlog
 
 # engine.py
-class EngineState(str, Enum):
+class EngineState(StrEnum):    # StrEnum per §"Enums subclass StrEnum"; ruff UP042
     starting = "starting"
     running = "running"
     blocked = "blocked"        # inotify gate not satisfied; watcher not attached, web stays up

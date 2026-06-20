@@ -10,7 +10,7 @@ from mediascanmonitor.db.models import DebounceMode, ServerType
 
 
 def test_ignore_dirs_contains_synology_system_folders() -> None:
-    assert IGNORE_DIRS == frozenset({"@eaDir", "#snapshot", "#recycle", "@tmp"})
+    assert frozenset({"@eaDir", "#snapshot", "#recycle", "@tmp"}) == IGNORE_DIRS
 
 
 def test_ignore_dirs_is_frozenset() -> None:
