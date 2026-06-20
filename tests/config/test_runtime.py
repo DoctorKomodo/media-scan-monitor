@@ -107,3 +107,125 @@ def test_runtime_config_fields_frozen_slotted() -> None:
     assert not hasattr(cfg, "__dict__")
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.routes = ()  # type: ignore[misc]
+
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
+
+from mediascanmonitor.config.runtime import build_runtime_config
+from mediascanmonitor.db.models import FileType, Folder, Server
+
+if TYPE_CHECKING:
+    from mediascanmonitor.db.repo import Repo
+
+
+@dataclass
+class FakeRepo:
+    """Typed structural stub for db.repo.Repo, exposing ONLY the methods that
+    build_runtime_config calls. Returns transient (never session-added) section-2
+    model instances; resolve_secret returns the already-"decrypted" plaintext."""
+
+    servers: list[Server] = field(default_factory=list)
+    folders_by_server: dict[int, list[Folder]] = field(default_factory=dict)
+    secrets: dict[int, str | None] = field(default_factory=dict)
+
+    def list_servers(self, *, enabled_only: bool = False) -> list[Server]:
+        if enabled_only:
+            return [s for s in self.servers if s.enabled]
+        return list(self.servers)
+
+    def list_folders(self, server_id: int) -> list[Folder]:
+        return list(self.folders_by_server.get(server_id, []))
+
+    def resolve_secret(self, server: Server) -> str | None:
+        if server.id is None:
+            return None
+        return self.secrets.get(server.id)
+
+
+def make_server(
+    server_id: int,
+    *,
+    name: str,
+    type: ServerType = ServerType.plex,
+    base_url: str = "https://plex.local:32400",
+    scan_mode: ScanMode = ScanMode.targeted,
+    debounce_mode: DebounceMode = DebounceMode.trailing,
+    enabled: bool = True,
+) -> Server:
+    return Server(
+        id=server_id,
+        name=name,
+        type=type,
+        base_url=base_url,
+        verify_tls=True,
+        timeout_seconds=10.0,
+        secret_encrypted="ciphertext-ignored-by-stub",
+        scan_mode=scan_mode,
+        debounce_mode=debounce_mode,
+        debounce_window_seconds=30,
+        retry_attempts=3,
+        enabled=enabled,
+    )
+
+
+def make_folder(
+    folder_id: int,
+    *,
+    server_id: int,
+    path: str,
+    library_id: str | None,
+    extensions: list[str],
+    enabled: bool = True,
+) -> Folder:
+    folder = Folder(
+        id=folder_id,
+        server_id=server_id,
+        path=path,
+        library_id=library_id,
+        enabled=enabled,
+    )
+    folder.filetypes = [
+        FileType(id=None, folder_id=folder_id, extension=ext) for ext in extensions
+    ]
+    return folder
+
+
+def test_build_runtime_config_happy_path() -> None:
+    server = make_server(1, name="plex-main")
+    folder = make_folder(
+        10, server_id=1, path="/data/media/tv/", library_id="2", extensions=["MKV", ".srt"]
+    )
+    repo = FakeRepo(
+        servers=[server],
+        folders_by_server={1: [folder]},
+        secrets={1: "plex-token-xyz"},
+    )
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    # One server, decrypted secret surfaced into ServerRuntime.
+    assert set(cfg.servers) == {1}
+    sr = cfg.servers[1]
+    assert sr.server_id == 1
+    assert sr.name == "plex-main"
+    assert sr.type is ServerType.plex
+    assert sr.secret == "plex-token-xyz"
+    assert sr.scan_mode is ScanMode.targeted
+    assert sr.debounce_mode is DebounceMode.trailing
+    assert sr.debounce_window_seconds == 30
+    assert sr.retry_attempts == 3
+
+    # One route, normalized path (trailing slash stripped) + normalized extensions.
+    assert len(cfg.routes) == 1
+    route = cfg.routes[0]
+    assert route.server_id == 1
+    assert route.server_name == "plex-main"
+    assert route.path == "/data/media/tv"
+    assert route.extensions == frozenset({"mkv", "srt"})
+    assert route.library_id == "2"
+    assert route.scan_mode is ScanMode.targeted
+
+    # Watch set is the normalized path; ignore dirs come from defaults.
+    assert cfg.watch_paths == frozenset({"/data/media/tv"})
+    assert "@eaDir" in cfg.ignore_dirs

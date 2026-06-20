@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.config.defaults import IGNORE_DIRS
+from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 if TYPE_CHECKING:
     from mediascanmonitor.db.repo import Repo
@@ -47,3 +49,55 @@ class RuntimeConfig:
     routes: tuple[FolderRoute, ...]      # one per enabled (server, folder)
     servers: dict[int, ServerRuntime]    # by server_id (enabled only)
     ignore_dirs: frozenset[str]
+
+
+def build_runtime_config(repo: Repo) -> RuntimeConfig:
+    """Read enabled servers/folders/filetypes from the DB, decrypt secrets, and assemble the
+    immutable snapshot. Disabled servers and their folders are excluded."""
+    servers: dict[int, ServerRuntime] = {}
+    routes: list[FolderRoute] = []
+    watch_paths: set[str] = set()
+
+    for server in repo.list_servers(enabled_only=True):
+        assert server.id is not None  # persisted servers always carry an id
+        server_id = server.id
+        servers[server_id] = ServerRuntime(
+            server_id=server_id,
+            name=server.name,
+            type=server.type,
+            base_url=server.base_url,
+            verify_tls=server.verify_tls,
+            timeout_seconds=server.timeout_seconds,
+            secret=repo.resolve_secret(server),
+            scan_mode=server.scan_mode,
+            debounce_mode=server.debounce_mode,
+            debounce_window_seconds=server.debounce_window_seconds,
+            retry_attempts=server.retry_attempts,
+            webhook_method=server.webhook_method,
+            webhook_headers_json=server.webhook_headers_json,
+            webhook_body_template=server.webhook_body_template,
+        )
+        for folder in repo.list_folders(server_id):
+            if not folder.enabled:
+                continue
+            path = normalize_path(folder.path)
+            watch_paths.add(path)
+            routes.append(
+                FolderRoute(
+                    server_id=server_id,
+                    server_name=server.name,
+                    path=path,
+                    extensions=frozenset(
+                        normalize_extension(ft.extension) for ft in folder.filetypes
+                    ),
+                    library_id=folder.library_id,
+                    scan_mode=server.scan_mode,
+                )
+            )
+
+    return RuntimeConfig(
+        watch_paths=frozenset(watch_paths),
+        routes=tuple(routes),
+        servers=servers,
+        ignore_dirs=IGNORE_DIRS,
+    )
