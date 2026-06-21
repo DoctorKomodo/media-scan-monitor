@@ -332,6 +332,12 @@ Check `docker compose logs media-scan-monitor`. The container exits on startup o
 - **Auto-generated password not working** — retrieve it from `/config/initial_password.txt`
   (see [First login](#first-login-auto-generated-password)). The file is deleted after you
   change the password; if it is missing you have already changed it once.
+- **Forgot the password** — on the login page click **Forgot password?** → **Reset password**.
+  This regenerates the admin password exactly like first run: it is written to
+  `/config/initial_password.txt` (mode 0600) and you are forced to change it on the next login.
+  Retrieve it on the host with `docker exec media-scan-monitor cat /config/initial_password.txt`.
+  The reset is rate-limited (3 per hour per client) and never reveals the password in the
+  browser — recovery still requires host access to read the file.
 - **Preset password (`MSM_PASSWORD_FILE`) not accepted** — verify the path exists and is readable
   inside the container. Or remove `MSM_PASSWORD_FILE` and let auto-generation handle first login.
 - **`MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE` mismatch** — if you provide an inline key that
