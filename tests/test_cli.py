@@ -9,7 +9,15 @@ from mediascanmonitor import __version__
 from mediascanmonitor import cli as cli_module
 from mediascanmonitor.cli import build_parser, main, serve_headless
 from mediascanmonitor.db.repo import Repo
-from tests._helpers import FakeClient, FakeWatcher, RecordingAdapter, make_config
+from mediascanmonitor.watcher.watch_limit import WatchLimitStatus
+from tests._helpers import (
+    FakeClient,
+    FakeWatcher,
+    RecordingAdapter,
+    make_config,
+    make_route,
+    make_server_runtime,
+)
 
 # --- Phase 0 parser smoke (unchanged) --------------------------------------
 
@@ -111,3 +119,36 @@ async def test_serve_headless_shuts_down_on_stop_event(
     )
 
     assert watcher.closed is True  # engine.aclose() ran -> clean shutdown
+
+
+async def test_serve_headless_blocked_returns_exit_3(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = make_server_runtime(1, name="plex")
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        cli_module.engine_module,
+        "build_runtime_config",
+        lambda repo: make_config([route], [server]),
+    )
+    monkeypatch.setattr(
+        cli_module.engine_module,
+        "create_adapter",
+        lambda server, client: RecordingAdapter(server, client),
+    )
+    monkeypatch.setattr(cli_module.engine_module, "build_client", lambda **_: FakeClient())
+    monkeypatch.setattr(
+        cli_module.engine_module,
+        "check_watch_limit",
+        lambda paths, ignore: WatchLimitStatus(
+            current=10, dirs=100, needed=120, recommended=144, ok=False
+        ),
+    )
+
+    class _StubRepo:
+        def get_setting(self, key: str) -> str | None:
+            return "enforce"
+
+    watcher = FakeWatcher()
+    code = await serve_headless(cast(Repo, _StubRepo()), watcher=watcher, install_signals=False)
+
+    assert code == 3
+    assert watcher.roots_history == []  # blocked before set_roots (headless contract)
