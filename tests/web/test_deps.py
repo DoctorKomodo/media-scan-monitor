@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.testclient import TestClient
 
 from mediascanmonitor.db.repo import Repo
-from mediascanmonitor.web.auth import set_password
+from mediascanmonitor.web.auth import MUST_CHANGE_KEY, set_password
 from mediascanmonitor.web.deps import require_api_auth, require_page_auth
 
 
@@ -69,4 +69,46 @@ def test_guards_allow_when_authenticated(repo: Repo, path: str) -> None:
     client = TestClient(app)
     client.post("/login-probe")
     resp = client.get(path)
+    assert resp.status_code == 200
+
+
+def _must_change_client(app, repo) -> TestClient:  # type: ignore[no-untyped-def]
+    set_password(repo, "pw")
+    repo.set_setting(MUST_CHANGE_KEY, "1")
+    client = TestClient(app)
+    resp = client.post("/auth/login", data={"password": "pw"}, follow_redirects=False)
+    assert resp.status_code == 303
+    return client
+
+
+def test_must_change_redirects_pages_to_account_password(app, repo) -> None:  # type: ignore[no-untyped-def]
+    client = _must_change_client(app, repo)
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/account/password"
+
+
+def test_must_change_allows_the_change_page_itself(app, repo) -> None:  # type: ignore[no-untyped-def]
+    client = _must_change_client(app, repo)
+    resp = client.get("/account/password", follow_redirects=False)
+    assert resp.status_code == 200  # not redirected — it is on the allowlist
+
+
+def test_must_change_allows_logout(app, repo) -> None:  # type: ignore[no-untyped-def]
+    client = _must_change_client(app, repo)
+    resp = client.post("/auth/logout", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"  # logout, not the change page
+
+
+def test_must_change_returns_403_on_api(app, repo) -> None:  # type: ignore[no-untyped-def]
+    client = _must_change_client(app, repo)
+    resp = client.get("/api/status")
+    assert resp.status_code == 403
+
+
+def test_cleared_flag_restores_normal_access(app, repo) -> None:  # type: ignore[no-untyped-def]
+    client = _must_change_client(app, repo)
+    repo.set_setting(MUST_CHANGE_KEY, "0")
+    resp = client.get("/", follow_redirects=False)
     assert resp.status_code == 200

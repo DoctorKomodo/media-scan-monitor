@@ -47,19 +47,35 @@ def _is_authed(request: Request) -> bool:
     return request.session.get("authed") is True
 
 
+# Paths an authenticated but must-change session may still reach (everything else
+# page-redirects to /account/password until the bootstrap password is rotated).
+_MUST_CHANGE_ALLOWLIST = ("/account/password", "/auth/logout")
+
+
 async def require_api_auth(request: Request) -> None:
-    if _is_authed(request):
-        return
     repo = get_repo(request)
+    if _is_authed(request):
+        if await asyncio.to_thread(auth.is_must_change, repo):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="password change required"
+            )
+        return
     if not await asyncio.to_thread(auth.is_password_set, repo):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="setup required")
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required")
 
 
 async def require_page_auth(request: Request) -> None:
-    if _is_authed(request):
-        return
     repo = get_repo(request)
+    if _is_authed(request):
+        if await asyncio.to_thread(auth.is_must_change, repo):
+            path = request.url.path
+            if not any(path.startswith(prefix) for prefix in _MUST_CHANGE_ALLOWLIST):
+                raise HTTPException(
+                    status_code=status.HTTP_303_SEE_OTHER,
+                    headers={"Location": "/account/password"},
+                )
+        return
     location = "/login"
     if not await asyncio.to_thread(auth.is_password_set, repo):
         location = "/setup"
