@@ -1,0 +1,19 @@
+<ul class="folder-list">
+  {% for f in folders %}
+  <li>
+    <form hx-post="/ui/folders/{{ f.id }}/update" hx-target="#folders" hx-swap="innerHTML">
+      <input type="text" name="path" value="{{ f.path }}">
+      <input type="text" name="library_id" value="{{ f.library_id or '' }}">
+      <input type="text" name="extensions" value="{{ f.extensions | join(', ') }}">
+      <label><input type="checkbox" name="enabled" {% if f.enabled %}checked{% endif %}> on</label>
+      <button type="submit">Save</button>
+    </form>
+    <form hx-post="/ui/folders/{{ f.id }}/delete" hx-target="#folders" hx-swap="innerHTML"
+          hx-confirm="Delete folder {{ f.path }}?">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </li>
+  {% else %}
+  <li>No folders yet.</li>
+  {% endfor %}
+</ul>

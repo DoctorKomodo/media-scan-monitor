@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Events — media-scan-monitor{% endblock %}
+{% block content %}
+{% include "_nav.html" %}
+<h1>Live events</h1>
+<p>Streaming from <code>/events/stream</code> (most recent at top).</p>
+<ul id="event-feed"></ul>
+<script>
+  // 6-line EventSource feed (no htmx SSE extension vendored — keeps the static surface to one file).
+  (function () {
+    const feed = document.getElementById("event-feed");
+    const source = new EventSource("/events/stream");
+    source.onmessage = function (e) {
+      const r = JSON.parse(e.data);
+      const li = document.createElement("li");
+      const ok = r.ok ? "ok" : "fail";
+      li.className = "event event-" + ok;
+      li.textContent = r.ts + "  [" + r.server_name + "] " + r.event_type + " " + r.file_path +
+        "  -> " + (r.ok ? "ok" : "FAIL") + (r.detail ? " (" + r.detail + ")" : "");
+      feed.insertBefore(li, feed.firstChild);
+    };
+  })();
+</script>
+{% endblock %}
