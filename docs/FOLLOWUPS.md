@@ -6,8 +6,9 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 ## Phase 3 — web UI
 
-- [ ] `Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery — Phase 1 consults the
-      gate only in `start()`. → 06 design-decision #7; contract §10
+- [x] ~~`Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery~~ — DONE in phase3-03 §I
+      (`_gate_ok` + `start(park_when_blocked)` + gate-aware `rebuild()`; blocked = zero-root watcher,
+      recovers with no restart). Opus-reviewed; four transitions tested.
 - [ ] Require a token when saving an auth-required server (Emby/Jellyfin/Audiobookshelf/Plex). The
       Phase 2 adapters fall back to an empty credential (`Bearer `/`X-Emby-Token: ""`/`Token=""`) when
       `secret is None`, so a tokenless save fails late with a backend `401` instead of being rejected

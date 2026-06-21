@@ -143,5 +143,6 @@ Phase 4 (Prometheus `/metrics`, dashboard widgets, README rewrite, repo/image re
 image smoke test) remains high-level in `docs/PLAN.md` and gets its own detailed plans once Phase 3
 lands. Carried-over items for Phase 3 to consume are listed in
 [`docs/FOLLOWUPS.md`](../../FOLLOWUPS.md) — the two that land here are **token-required validation**
-(contract §D) and **`rebuild()` blocked↔running gate-recovery** (sub-plan 03). Remove them from the
-index when done.
+(contract §D; API-boundary 422 done in sub-plan 02, `/ui` form enforcement in sub-plan 04) and
+**`rebuild()` blocked↔running gate-recovery** (sub-plan 03 — ✅ done). Remove each from the index when
+fully done.
