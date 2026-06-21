@@ -1,30 +1,212 @@
-name: Build Docker image
+# Builds, smoke-tests, and publishes the media-scan-monitor Docker image.
+#
+# Job graph:
+#   smoke  → build amd64 (--load) + assert non-root / /health / migrations
+#   publish → (needs: smoke) build linux/amd64,linux/arm64 + push to GHCR
+#
+# On PRs: both jobs run but the publish job does not push (push: false).
+# On app-v2 pushes: publishes ghcr.io/<owner>/media-scan-monitor:app-v2.
+# On main pushes: also sets the `latest` tag (is_default_branch gate).
+# On v* tags: sets semver tags.
+
+name: Build & Smoke-Test Docker Image
 
 on:
   push:
-    branches: [main]
+    branches: [main, app-v2]
     tags: ['v*']
     paths:
-      - 'plex_monitor.sh'
+      - 'mediascanmonitor/**'
+      - 'uv.lock'
+      - 'pyproject.toml'
       - 'Dockerfile'
+      - '.dockerignore'
       - '.github/workflows/docker-build.yml'
   pull_request:
     paths:
-      - 'plex_monitor.sh'
+      - 'mediascanmonitor/**'
+      - 'uv.lock'
+      - 'pyproject.toml'
       - 'Dockerfile'
+      - '.dockerignore'
       - '.github/workflows/docker-build.yml'
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Decoupled from the repo directory name so the image publishes as
+  # ghcr.io/<owner>/media-scan-monitor regardless of what the repo is called.
+  # A bare "media-scan-monitor" (no owner) is an invalid GHCR reference.
+  IMAGE_NAME: ${{ github.repository_owner }}/media-scan-monitor
 
 jobs:
-  build:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # smoke: build amd64-only (--load → runnable local image) and assert:
+  #   1. process runs as non-root (UID 1000)
+  #   2. GET /health → HTTP 200, body contains "ok"
+  #   3. /config/app.db migrated to Alembic head; domain tables present
+  #
+  # Buildx cannot --load a multi-platform image, so the smoke build is
+  # amd64-only. The publish job re-runs the build for both arches (incremental
+  # via the shared GHA cache).
+  # ─────────────────────────────────────────────────────────────────────────────
+  smoke:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # needed to push to ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No QEMU needed — building only for the runner's native amd64 arch.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build amd64 image (local load for smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: msm-smoke:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # /config writability strategy: use a named Docker volume.
+      # When a container mounts a new named volume over a directory that exists
+      # in the image, Docker copies the image directory into the volume on first
+      # use — inheriting the ownership set by the Dockerfile (app:app, UID 1000).
+      # This means UID 1000 can write app.db and secret.key with no runner chown.
+      #
+      # Alternative (bind mount): mkdir /tmp/msm-config && sudo chown 1000:1000 /tmp/msm-config
+      #   docker run ... -v /tmp/msm-config:/config ...
+      - name: Start container
+        run: |
+          docker run -d --name msm-smoke \
+            -p 8080:8080 \
+            -v msm-smoke-config:/config \
+            -e MSM_PASSWORD=smoketest123 \
+            msm-smoke:latest
+
+      # Poll /health until the app is up or 60 s elapses.
+      # The Dockerfile sets --start-period=20s; allow up to 3× that.
+      - name: Wait for /health (up to 60 s)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Container healthy (attempt ${i})"
+              break
+            fi
+            if [ "${i}" -eq 30 ]; then
+              echo "ERROR: container did not become healthy within 60 s"
+              docker logs msm-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Assertion 1: non-root ─────────────────────────────────────────────
+      # Contract §I·1, §C: the runtime user must be UID 1000 (never root).
+      - name: "Assert §I·1 — non-root (UID 1000)"
+        run: |
+          UID_VAL=$(docker exec msm-smoke id -u)
+          echo "Container UID: ${UID_VAL}"
+          if [ "${UID_VAL}" != "1000" ]; then
+            echo "FAIL: expected UID 1000, got ${UID_VAL}"
+            exit 1
+          fi
+
+      # ── Assertion 2: /health → 200 with {"status":"ok"} ──────────────────
+      # Contract §I·2, §B/§F: port 8080, unauthenticated, body {"status":"ok"}.
+      - name: "Assert §I·2 — GET /health returns 200 ok"
+        run: |
+          RESP=$(curl -sf http://localhost:8080/health)
+          echo "Response: ${RESP}"
+          if ! echo "${RESP}" | grep -q '"ok"'; then
+            echo 'FAIL: expected body to contain "ok"'
+            exit 1
+          fi
+
+      # ── Assertion 3: migrated to Alembic head ────────────────────────────
+      # Contract §I·3: /config/app.db exists and alembic_version.version_num
+      # equals the repo's current head. The expected head is computed dynamically
+      # from the installed package (mediascanmonitor.db.session._MIGRATIONS_DIR
+      # + alembic ScriptDirectory) — never hardcoded. Domain tables are also
+      # checked so a half-migrated DB fails even if the version row matches.
+      - name: "Assert §I·3 — DB migrated to head, domain tables present"
+        run: |
+          cat > /tmp/assert_migrated.py << 'PYEOF'
+          import sqlite3
+          from mediascanmonitor.db.session import _MIGRATIONS_DIR
+          from alembic.script import ScriptDirectory
+          from alembic.config import Config
+
+          # Compute expected head from the migrations bundled in the installed package.
+          cfg = Config()
+          cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+          sd = ScriptDirectory.from_config(cfg)
+          heads = [r.revision for r in sd.get_revisions("heads")]
+          assert len(heads) == 1, f"expected one head revision, got {heads}"
+          expected_head = heads[0]
+
+          # Read what Alembic recorded in the DB.
+          conn = sqlite3.connect("/config/app.db")
+          ver_row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+          tables = {
+              r[0]
+              for r in conn.execute(
+                  "SELECT name FROM sqlite_master"
+                  " WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+              )
+          }
+          conn.close()
+
+          assert ver_row is not None, "alembic_version table is empty — migrations did not run"
+          actual = ver_row[0]
+          assert actual == expected_head, (
+              f"DB not at head: got {actual!r}, want {expected_head!r}"
+          )
+
+          required_tables = {"server", "folder", "filetype", "setting"}
+          missing = required_tables - tables
+          assert not missing, f"missing domain tables: {missing} (found: {sorted(tables)})"
+
+          print(f"OK: at head ({actual}), domain tables present: {sorted(tables)}")
+          PYEOF
+          docker cp /tmp/assert_migrated.py msm-smoke:/tmp/assert_migrated.py
+          docker exec msm-smoke python /tmp/assert_migrated.py
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs msm-smoke
+
+      - name: Stop and remove container
+        if: always()
+        run: |
+          docker stop msm-smoke || true
+          docker rm -v msm-smoke || true
+          docker volume rm msm-smoke-config || true  # named volume; `rm -v` only drops anonymous ones
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # publish: multi-arch (amd64 + arm64) build-and-push, gated on smoke passing.
+  #
+  # arm64 is preserved for NAS targets (Synology, QNAP).
+  # Push is gated on github.event_name != 'pull_request' — PRs run the job but
+  # do not write to GHCR.
+  #
+  # Tag strategy (contract §A):
+  #   type=ref,event=branch   → "app-v2" on app-v2 pushes, "main" on main pushes
+  #   type=raw,value=latest,enable={{is_default_branch}} → only on main (stays
+  #     unset until app-v2 is merged as the viable replacement)
+  #   type=semver,pattern=*   → on v* tags
+  # ─────────────────────────────────────────────────────────────────────────────
+  publish:
+    needs: [smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # required to push to ghcr.io
 
     steps:
       - name: Checkout
@@ -36,7 +218,7 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Only log in / push on real branch & tag pushes, not on PRs from forks.
+      # Only log in / push on real branch/tag pushes, not on PRs from forks.
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -45,7 +227,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -57,7 +239,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
+      - name: Build and push (linux/amd64, linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
