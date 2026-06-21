@@ -6,6 +6,7 @@ watcher is injectable so non-Linux dev/tests can supply a fake backend.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from enum import StrEnum
 
 import httpx
@@ -13,6 +14,7 @@ import structlog
 
 from mediascanmonitor.config.runtime import RuntimeConfig, build_runtime_config
 from mediascanmonitor.db.repo import Repo
+from mediascanmonitor.observ.events_bus import EventRecord, EventsBus
 from mediascanmonitor.pipeline.debounce import Debouncer
 from mediascanmonitor.pipeline.dispatcher import Dispatcher
 from mediascanmonitor.pipeline.events import FsEvent, ScanRequest
@@ -36,9 +38,16 @@ class EngineState(StrEnum):
 class Engine:
     """Owns one watcher and the routing/debounce/dispatch pipeline."""
 
-    def __init__(self, repo: Repo, *, watcher: WatcherBackend | None = None) -> None:
+    def __init__(
+        self,
+        repo: Repo,
+        *,
+        watcher: WatcherBackend | None = None,
+        events_bus: EventsBus | None = None,
+    ) -> None:
         self._repo = repo
         self._watcher: WatcherBackend | None = watcher
+        self._events_bus = events_bus
         self._config: RuntimeConfig | None = None
         self._dispatcher: Dispatcher | None = None
         self._debouncer: Debouncer | None = None
@@ -185,11 +194,34 @@ class Engine:
         return adapters, clients
 
     async def _dispatch(self, req: ScanRequest) -> None:
-        """Adapter for the Debouncer's ``Awaitable[None]`` dispatch signature."""
+        """Adapter for the Debouncer's ``Awaitable[None]`` dispatch signature.
+
+        Captures the dispatch outcome and, if an events bus is wired, publishes a
+        redacted ``EventRecord`` (no secret field — invariant 1). Without a bus this
+        reproduces the Phase 1/2 behavior exactly.
+        """
         dispatcher = self._dispatcher
         if dispatcher is None:
             return
-        await dispatcher.dispatch(req)
+        result = await dispatcher.dispatch(req)
+        bus = self._events_bus
+        if bus is not None:
+            bus.publish(
+                EventRecord(
+                    ts=datetime.now(UTC).isoformat(),
+                    server_id=req.server_id,
+                    server_name=req.server_name,
+                    scan_mode=req.scan_mode.value,
+                    scan_key=req.scan_key,
+                    scan_path=req.scan_path,
+                    library_id=req.library_id,
+                    event_type=req.event_type.value,
+                    file_path=req.file_path,
+                    ok=result.ok,
+                    status_code=result.status_code,
+                    detail=result.detail,
+                )
+            )
 
     async def _handle_event(self, event: FsEvent) -> None:
         # Snapshot the immutable config locally BEFORE any await so a concurrent
