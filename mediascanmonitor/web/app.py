@@ -21,6 +21,7 @@ from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventsBus
 from mediascanmonitor.web import auth
+from mediascanmonitor.web.api import events as api_events
 from mediascanmonitor.web.api import folders as api_folders
 from mediascanmonitor.web.api import servers as api_servers
 from mediascanmonitor.web.ratelimit import LoginRateLimiter
@@ -53,7 +54,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(api_servers.router)
     app.include_router(api_folders.router)
-    # sub-plan 02: events.router
+    app.include_router(api_events.router)
     # sub-plan 03: app.include_router(system.router)
     # sub-plan 04: app.include_router(pages.router); app.mount("/static", StaticFiles(...))
 
