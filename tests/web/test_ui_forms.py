@@ -139,3 +139,23 @@ def test_ui_update_folder_replaces_extensions(
     assert resp.status_code == 200
     exts = [ft.extension for ft in repo.list_folders(sid)[0].filetypes]
     assert exts == ["mp4"]
+
+
+def test_ui_delete_server_nonexistent_returns_200(
+    auth_client: httpx.Client,
+) -> None:
+    """Deleting a non-existent server returns 200 (not 500) — idempotent delete."""
+    resp = auth_client.post("/ui/servers/9999/delete")
+    assert resp.status_code == 200
+
+
+def test_ui_update_folder_nonexistent_returns_200_inline_error(
+    auth_client: httpx.Client,
+) -> None:
+    """Updating a non-existent folder returns 200 (not 500) with inline error partial."""
+    resp = auth_client.post(
+        "/ui/folders/9999/update",
+        data={"path": "/data/tv", "library_id": "2", "extensions": "mp4", "enabled": "on"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("hx-retarget") == "#folder-error"

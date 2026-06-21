@@ -350,7 +350,11 @@ async def ui_delete_server(
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    await apply_server_delete(repo, engine, server_id)
+    try:
+        await apply_server_delete(repo, engine, server_id)
+    except (HTTPException, ValueError, KeyError) as exc:
+        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        return _error_partial(request, templates, detail, "#edit-error")
     return await _servers_list_response(request, repo, templates)
 
 
@@ -394,7 +398,7 @@ async def ui_update_folder(
 ) -> Response:
     folder = await asyncio.to_thread(repo.get_folder, folder_id)
     if folder is None:
-        raise HTTPException(status_code=404, detail=f"folder {folder_id} not found")
+        return _error_partial(request, templates, f"folder {folder_id} not found", "#folder-error")
     server_id = folder.server_id
     try:
         data = FolderUpdate(
@@ -404,7 +408,7 @@ async def ui_update_folder(
             enabled=enabled,
         )
         await apply_folder_update(repo, engine, folder_id, data)
-    except (HTTPException, ValueError) as exc:
+    except (HTTPException, ValueError, KeyError) as exc:
         detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         return _error_partial(request, templates, detail, "#folder-error")
     return await _folders_response(request, repo, server_id, templates)
@@ -420,7 +424,11 @@ async def ui_delete_folder(
 ) -> Response:
     folder = await asyncio.to_thread(repo.get_folder, folder_id)
     if folder is None:
-        raise HTTPException(status_code=404, detail=f"folder {folder_id} not found")
+        return _error_partial(request, templates, f"folder {folder_id} not found", "#folder-error")
     server_id = folder.server_id
-    await apply_folder_delete(repo, engine, folder_id)
+    try:
+        await apply_folder_delete(repo, engine, folder_id)
+    except (HTTPException, ValueError, KeyError) as exc:
+        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        return _error_partial(request, templates, detail, "#folder-error")
     return await _folders_response(request, repo, server_id, templates)
