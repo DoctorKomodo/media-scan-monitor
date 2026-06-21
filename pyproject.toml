@@ -28,6 +28,11 @@ dependencies = [
     "prometheus-client==0.25.0",
     "cryptography==49.0.0",
     "argon2-cffi==25.1.0",
+    # Starlette SessionMiddleware signs the session cookie with itsdangerous (optional
+    # Starlette dep, not installed transitively); python-multipart parses Form() POSTs.
+    # Both verified current-stable on PyPI at add-time (2026-06-20).
+    "itsdangerous==2.2.0",
+    "python-multipart==0.0.32",
 ]
 
 [project.optional-dependencies]
@@ -74,6 +79,18 @@ select = [
 # alphabetizes it in with real third-party imports. Pin it first-party so imports group
 # conventionally (stdlib / third-party / first-party).
 known-first-party = ["mediascanmonitor"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are designed to sit in parameter defaults;
+# treat them as immutable so ruff B008 (function-call-in-default) does not fire.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Form",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B"]
