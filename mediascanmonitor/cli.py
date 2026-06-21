@@ -88,7 +88,7 @@ async def serve_headless(
     if install_signals:
         _install_signal_handlers(asyncio.get_running_loop(), stop)
 
-    start_task = asyncio.create_task(engine.start())
+    start_task = asyncio.create_task(engine.start(park_when_blocked=False))
     stop_task = asyncio.create_task(stop.wait())
     try:
         await asyncio.wait({start_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)

@@ -182,7 +182,7 @@ async def test_blocked_when_watch_limit_insufficient_and_enforced(
 
     watcher = FakeWatcher()
     engine = Engine(stub_repo, watcher=watcher)
-    await engine.start()  # returns immediately: blocked, watcher never attached
+    await engine.start(park_when_blocked=False)  # headless contract: block -> return, no roots
 
     assert engine.state is EngineState.blocked
     assert engine.watch_limit is not None and engine.watch_limit.ok is False
@@ -397,3 +397,138 @@ async def test_dispatch_publishes_event_record_when_bus_present(
     assert rec.ok is True
     assert rec.status_code == 200
     assert rec.ts.endswith("+00:00")  # ISO-8601 UTC, timezone-aware
+
+
+# ---------------------------------------------------------------------------
+# Gate-recovery transition tests (blocked ↔ running, no restart)
+# ---------------------------------------------------------------------------
+
+
+class _MutRepo:
+    """Repo stub with a settable inotify_gate policy (start/rebuild read only get_setting)."""
+
+    def __init__(self, gate: str = "enforce") -> None:
+        self.gate = gate
+
+    def get_setting(self, key: str) -> str | None:
+        return self.gate
+
+
+def _ok(_paths: object, _ignore: object) -> WatchLimitStatus:
+    return WatchLimitStatus(current=1_000_000, dirs=0, needed=0, recommended=0, ok=True)
+
+
+def _not_ok(_paths: object, _ignore: object) -> WatchLimitStatus:
+    return WatchLimitStatus(current=10, dirs=100, needed=120, recommended=144, ok=False)
+
+
+async def test_blocked_to_running_on_policy_flip_to_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(engine_module, "check_watch_limit", _not_ok)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    repo = _MutRepo(gate="enforce")
+    watcher = FakeWatcher()
+    engine = Engine(cast(Repo, repo), watcher=watcher)
+    start_task = asyncio.create_task(engine.start())  # default park_when_blocked=True
+    await wait_for(lambda: engine.state is EngineState.blocked)
+    assert watcher.current_roots == set()  # parked at zero roots, loop alive
+
+    # Flip the policy to off and rebuild -> gate now passes -> roots attach, state running.
+    repo.gate = "off"
+    await engine.rebuild()
+    assert engine.state is EngineState.running
+    assert watcher.current_roots == {"/data/tv"}
+
+    await engine.aclose()
+    await start_task
+
+
+async def test_blocked_to_running_on_limit_raised_then_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(engine_module, "check_watch_limit", _not_ok)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    repo = _MutRepo(gate="enforce")
+    watcher = FakeWatcher()
+    engine = Engine(cast(Repo, repo), watcher=watcher)
+    start_task = asyncio.create_task(engine.start())
+    await wait_for(lambda: engine.state is EngineState.blocked)
+
+    # Operator raised fs.inotify.max_user_watches out of band -> recheck re-evaluates the gate.
+    monkeypatch.setattr(engine_module, "check_watch_limit", _ok)
+    await engine.rebuild()
+    assert engine.state is EngineState.running
+    assert watcher.current_roots == {"/data/tv"}
+    assert engine.watch_limit is not None and engine.watch_limit.ok is True
+
+    await engine.aclose()
+    await start_task
+
+
+async def test_running_to_blocked_on_config_outgrowth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(engine_module, "check_watch_limit", _ok)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    repo = _MutRepo(gate="enforce")
+    watcher = FakeWatcher()
+    engine = Engine(cast(Repo, repo), watcher=watcher)
+    start_task = asyncio.create_task(engine.start())
+    await wait_for(lambda: engine.state is EngineState.running)
+    assert watcher.current_roots == {"/data/tv"}
+
+    # The new config outgrows the limit under enforce -> rebuild parks at zero roots.
+    monkeypatch.setattr(engine_module, "check_watch_limit", _not_ok)
+    await engine.rebuild()
+    assert engine.state is EngineState.blocked
+    assert watcher.current_roots == set()
+
+    await engine.aclose()
+    await start_task
+
+
+async def test_headless_park_false_blocked_returns_without_attaching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: dict[int, RecordingAdapter] = {}
+    _patch_factories(monkeypatch, created)
+    monkeypatch.setattr(engine_module, "check_watch_limit", _not_ok)
+
+    server = make_server_runtime(1, name="plex", debounce=DebounceMode.off)
+    route = make_route(1, name="plex", path="/data/tv", library_id="2")
+    monkeypatch.setattr(
+        engine_module, "build_runtime_config", lambda repo: make_config([route], [server])
+    )
+
+    watcher = FakeWatcher()
+    engine = Engine(cast(Repo, _MutRepo(gate="enforce")), watcher=watcher)
+    await engine.start(park_when_blocked=False)  # returns immediately, no loop
+
+    assert engine.state is EngineState.blocked
+    assert watcher.roots_history == []  # set_roots never called -> headless exit-3 contract
+    await engine.aclose()

@@ -59,8 +59,20 @@ class Engine:
 
     # -- public lifecycle ----------------------------------------------------
 
-    async def start(self) -> None:
-        """Build the runtime, consult the inotify gate, wire the pipeline, consume events."""
+    async def start(self, *, park_when_blocked: bool = True) -> None:
+        """Build the runtime, wire the pipeline, consult the inotify gate, consume events.
+
+        The pipeline (adapters/dispatcher/debouncer/watcher) is wired **unconditionally** —
+        none of it needs the gate and ``_build_adapters`` does no network I/O. Then:
+
+        * ``park_when_blocked=True`` (web): a failed gate parks the watcher at **zero roots**
+          and enters the consume loop anyway; the watcher yields nothing so the engine idles
+          in ``blocked`` until a later ``rebuild()`` re-points the roots. The loop is never
+          interrupted, so the web layer is never wedged (invariant 5).
+        * ``park_when_blocked=False`` (headless): a failed gate sets ``blocked`` and **returns**
+          without attaching roots or looping — the Bash-style block→exit-3 behavior. The
+          headless test asserts ``watcher.roots_history == []``.
+        """
         if self._started:
             raise RuntimeError("Engine.start() called more than once")
         self._started = True
@@ -68,26 +80,6 @@ class Engine:
 
         config = await asyncio.to_thread(build_runtime_config, self._repo)
         self._config = config
-
-        # inotify gate (contract §8/§10): only meaningful when something is watched.
-        if config.watch_paths:
-            policy = await asyncio.to_thread(self._repo.get_setting, "inotify_gate")
-            self.watch_limit = await asyncio.to_thread(
-                check_watch_limit, config.watch_paths, config.ignore_dirs
-            )
-            if (policy or "enforce") == "enforce" and not self.watch_limit.ok:
-                self.state = EngineState.blocked
-                log.error(
-                    "engine.blocked",
-                    reason="inotify watch limit too low",
-                    current=self.watch_limit.current,
-                    needed=self.watch_limit.needed,
-                    recommended=self.watch_limit.recommended,
-                    remediation=(
-                        f"raise fs.inotify.max_user_watches to >= {self.watch_limit.recommended}"
-                    ),
-                )
-                return  # do NOT attach the watcher; serve_headless observes `blocked` and exits
 
         if self._watcher is None:
             # Lazy import keeps the engine importable on non-Linux dev machines.
@@ -100,16 +92,27 @@ class Engine:
         self._dispatcher = Dispatcher(adapters)
         self._debouncer = Debouncer(self._dispatch, config.servers)
 
-        self._watcher.set_roots(set(config.watch_paths))
-        self.state = EngineState.running
-        log.info(
-            "engine.started",
-            watch_paths=sorted(config.watch_paths),
-            servers=len(config.servers),
-            routes=len(config.routes),
-        )
+        gate_ok = await self._gate_ok(config)
 
-        async for event in self._watcher.events():
+        if not gate_ok and not park_when_blocked:
+            # Headless: do NOT attach roots or loop; serve_headless observes `blocked` and exits 3.
+            self.state = EngineState.blocked
+            self._log_blocked(config)
+            return
+
+        self._watcher.set_roots(set(config.watch_paths) if gate_ok else set())
+        self.state = EngineState.running if gate_ok else EngineState.blocked
+        if gate_ok:
+            log.info(
+                "engine.started",
+                watch_paths=sorted(config.watch_paths),
+                servers=len(config.servers),
+                routes=len(config.routes),
+            )
+        else:
+            self._log_blocked(config)
+
+        async for event in self._watcher.events():  # idles when roots are empty (parked)
             await self._handle_event(event)
 
     async def aclose(self) -> None:
@@ -124,12 +127,46 @@ class Engine:
         self.state = EngineState.stopped
         log.info("engine.closed")
 
+    async def _gate_ok(self, config: RuntimeConfig) -> bool:
+        """Return whether the inotify gate is satisfied, and refresh ``self.watch_limit``.
+
+        True when there is nothing to watch, OR the ``inotify_gate`` policy is ``off``, OR the
+        measured watch limit is sufficient. Side effect: sets ``self.watch_limit`` (``None`` when
+        there are no watch paths) so ``/api/status`` and ``/ready`` reflect live state. The repo
+        read and the blocking ``check_watch_limit`` both run via ``asyncio.to_thread``.
+        """
+        if not config.watch_paths:
+            self.watch_limit = None
+            return True
+        policy = await asyncio.to_thread(self._repo.get_setting, "inotify_gate")
+        self.watch_limit = await asyncio.to_thread(
+            check_watch_limit, config.watch_paths, config.ignore_dirs
+        )
+        if (policy or "enforce") == "off":
+            return True
+        return self.watch_limit.ok
+
+    def _log_blocked(self, config: RuntimeConfig) -> None:
+        wl = self.watch_limit
+        log.error(
+            "engine.blocked",
+            reason="inotify watch limit too low",
+            watch_paths=sorted(config.watch_paths),
+            current=wl.current if wl else None,
+            needed=wl.needed if wl else None,
+            recommended=wl.recommended if wl else None,
+            remediation=(
+                f"raise fs.inotify.max_user_watches to >= {wl.recommended}" if wl else None
+            ),
+        )
+
     async def rebuild(self) -> None:
         """Rebuild the runtime snapshot and atomically swap it in — no restart.
 
-        The DB read (``to_thread``) and old-client teardown (``aclose``) bracket a
-        fully synchronous swap block, so no awaitable point splits a routing
-        decision: every in-flight event uses one consistent snapshot.
+        Re-evaluates the inotify gate and re-points the watcher roots, covering all four
+        ``blocked ↔ running`` transitions **without raising**. The DB read (``to_thread``),
+        the gate check (``to_thread``), and the old-client teardown (``aclose``) bracket a
+        fully synchronous swap block, so no awaitable point splits a routing decision.
         """
         if (
             not self._started
@@ -142,23 +179,28 @@ class Engine:
         async with self._lock:
             new_config = await asyncio.to_thread(build_runtime_config, self._repo)
             new_adapters, new_clients = await self._build_adapters(new_config)
+            gate_ok = await self._gate_ok(new_config)
 
             old_clients = self._clients
             old_paths = self._config.watch_paths if self._config else frozenset()
             new_paths = new_config.watch_paths
+            roots = set(new_paths) if gate_ok else set()
 
             # --- atomic swap (NO await between these statements) -------------
             self._dispatcher.set_adapters(new_adapters)
             self._debouncer.update_servers(new_config.servers)
             self._config = new_config
             self._clients = new_clients
-            self._watcher.set_roots(set(new_paths))
+            self._watcher.set_roots(roots)
+            self.state = EngineState.running if gate_ok else EngineState.blocked
             # ----------------------------------------------------------------
 
             log.info(
                 "engine.rebuilt",
-                added=sorted(new_paths - old_paths),
-                removed=sorted(old_paths - new_paths),
+                gate_ok=gate_ok,
+                state=self.state.value,
+                added=sorted(new_paths - old_paths) if gate_ok else [],
+                removed=sorted(old_paths - new_paths) if gate_ok else sorted(old_paths),
                 servers=len(new_config.servers),
                 routes=len(new_config.routes),
             )
