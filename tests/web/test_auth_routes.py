@@ -5,8 +5,6 @@ from starlette.testclient import TestClient
 from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.web.auth import check_password, is_password_set, set_password
 
-from .conftest import AUTH_PASSWORD
-
 
 def test_login_success_sets_session_and_redirects(app, repo: Repo) -> None:  # type: ignore[no-untyped-def]
     set_password(repo, "pw")
@@ -64,25 +62,91 @@ def test_logout_clears_session(auth_client: TestClient) -> None:
     assert again.headers["location"] == "/login"
 
 
+def test_get_change_password_renders_form(auth_client: TestClient) -> None:
+    resp = auth_client.get("/account/password")
+    assert resp.status_code == 200
+    assert "Change password" in resp.text
+
+
 def test_change_password_success(auth_client: TestClient, repo: Repo) -> None:
     resp = auth_client.post(
-        "/auth/password",
-        data={"current_password": AUTH_PASSWORD, "new_password": "brand-new"},
+        "/account/password",
+        data={
+            "current_password": "pw",
+            "new_password": "brand-new-pw",
+            "confirm_password": "brand-new-pw",
+        },
         follow_redirects=False,
     )
-    assert resp.status_code in (200, 303)
-    assert check_password(repo, "brand-new") is True
-    assert check_password(repo, AUTH_PASSWORD) is False
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+    from mediascanmonitor.web.auth import check_password
+
+    assert check_password(repo, "brand-new-pw")
 
 
-def test_change_password_wrong_current_is_rejected(auth_client: TestClient, repo: Repo) -> None:
+def test_change_password_wrong_current_rerenders_form(auth_client: TestClient) -> None:
     resp = auth_client.post(
-        "/auth/password",
-        data={"current_password": "nope", "new_password": "brand-new"},
+        "/account/password",
+        data={
+            "current_password": "wrong",
+            "new_password": "x",
+            "confirm_password": "x",
+        },
         follow_redirects=False,
     )
-    assert resp.status_code in (200, 400, 401)
-    assert check_password(repo, AUTH_PASSWORD) is True  # unchanged
+    assert resp.status_code == 400
+    assert "Change password" in resp.text  # the change-password template, not login.html
+    assert "Current password is incorrect." in resp.text
+
+
+def test_change_password_confirm_mismatch_rejected(auth_client: TestClient) -> None:
+    resp = auth_client.post(
+        "/account/password",
+        data={
+            "current_password": "pw",
+            "new_password": "aaa",
+            "confirm_password": "bbb",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    assert "do not match" in resp.text
+
+
+def test_change_password_requires_auth(client: TestClient) -> None:
+    resp = client.post(
+        "/account/password",
+        data={"current_password": "pw", "new_password": "x", "confirm_password": "x"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303  # redirected by require_page_auth (not authed)
+
+
+def test_change_password_clears_must_change_and_deletes_file(
+    app,
+    repo: Repo,
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from mediascanmonitor.web.auth import MUST_CHANGE_KEY, set_password
+
+    pw_file = tmp_path / "initial_password.txt"
+    pw_file.write_text("pw\n", encoding="utf-8")
+    monkeypatch.setenv("MSM_INITIAL_PASSWORD_FILE", str(pw_file))
+    set_password(repo, "pw")
+    repo.set_setting(MUST_CHANGE_KEY, "1")
+
+    client = TestClient(app)
+    client.post("/auth/login", data={"password": "pw"}, follow_redirects=False)
+    resp = client.post(
+        "/account/password",
+        data={"current_password": "pw", "new_password": "rotated", "confirm_password": "rotated"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert repo.get_setting(MUST_CHANGE_KEY) == "0"
+    assert not pw_file.exists()
 
 
 def test_get_login_renders_form(client: TestClient) -> None:

@@ -200,23 +200,46 @@ async def logout(request: Request) -> Response:
     return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@router.post("/auth/password", dependencies=[Depends(require_page_auth)])
+@router.get("/account/password", dependencies=[Depends(require_page_auth)])
+async def change_password_page(
+    request: Request,
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    must_change = await asyncio.to_thread(is_must_change, repo)
+    return templates.TemplateResponse(
+        request, "change_password.html", {"error": None, "must_change": must_change}
+    )
+
+
+@router.post("/account/password", dependencies=[Depends(require_page_auth)])
 async def change_password(
     request: Request,
     current_password: str = Form(...),
     new_password: str = Form(...),
+    confirm_password: str = Form(...),
     repo: Repo = Depends(get_repo),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    if not await asyncio.to_thread(check_password, repo, current_password):
+    must_change = await asyncio.to_thread(is_must_change, repo)
+
+    def _render_error(message: str) -> Response:
         return templates.TemplateResponse(
             request,
-            "login.html",
-            {"error": "Current password is incorrect."},
+            "change_password.html",
+            {"error": message, "must_change": must_change},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
+
+    if not await asyncio.to_thread(check_password, repo, current_password):
+        return _render_error("Current password is incorrect.")
+    if not new_password.strip():
+        return _render_error("New password must not be empty.")
+    if new_password != confirm_password:
+        return _render_error("New password and confirmation do not match.")
     # no rebuild: auth is not engine config
     await asyncio.to_thread(set_password, repo, new_password)
+    await asyncio.to_thread(clear_initial_password, repo, _resolve_initial_password_path())
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
 

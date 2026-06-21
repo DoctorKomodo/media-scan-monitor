@@ -13,10 +13,6 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       (`web/writes.py`, sub-plan 02) raise `422` when a `requires_secret` type (`SERVER_TYPE_SPECS`)
       would be saved with no/empty secret (tri-state aware); the `/ui` form (sub-plan 04) softens that
       to an inline error WITHOUT writing or rebuilding. Webhook exempt. JSON API + htmx both enforced.
-- [ ] `POST /auth/password` failure path renders `login.html` (no change-password template exists in
-      sub-plan 01). Once the settings/account page lands, switch the wrong-current-password error to
-      render that template instead. → phase3-01 Task 5; flagged in task review
-
 ### Deferred UI polish (sub-plan 04)
 
 - [ ] Server **Test** button posts to the JSON `POST /api/servers/{id}/test` and shows raw JSON; a
