@@ -148,7 +148,7 @@ stored in `app.db`.
 | `MSM_SECRET_KEY` | — | Fernet key provided inline. **Takes precedence over the key file** (`MSM_SECRET_KEY` > file > auto-generate). If set, it must match the key that originally encrypted `app.db` or stored secrets won't decrypt. |
 | `MSM_PASSWORD_FILE` | — | Path to a file containing the first-run password. File contents are whitespace-stripped. Takes precedence over `MSM_PASSWORD`. Never overwrites a password already set in the UI. If either `MSM_PASSWORD_FILE` or `MSM_PASSWORD` is set, no password is generated and no forced change occurs. |
 | `MSM_PASSWORD` | — | First-run password provided inline. Only used if `MSM_PASSWORD_FILE` is not set. Never overwrites a password already set in the UI. If either `MSM_PASSWORD_FILE` or `MSM_PASSWORD` is set, no password is generated and no forced change occurs. |
-| `MSM_INITIAL_PASSWORD_FILE` | `/config/initial_password.txt` | Where the auto-generated first-run password is written (mode 0600). Defaults to the directory of `MSM_DB_PATH`. |
+| `MSM_INITIAL_PASSWORD_FILE` | `/config/initial_password.txt` | Where the auto-generated first-run password is written (mode 0600). Defaults to `initial_password.txt` in the directory of `MSM_DB_PATH` (i.e. `/config/initial_password.txt` with the default DB path). |
 | `TZ` | (system) | Container timezone, used for log timestamps. Set to your local zone (e.g. `Europe/London`, `America/New_York`). |
 
 ### Liveness check

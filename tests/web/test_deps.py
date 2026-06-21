@@ -92,6 +92,20 @@ def test_must_change_allows_the_change_page_itself(app, repo) -> None:  # type: 
     client = _must_change_client(app, repo)
     resp = client.get("/account/password", follow_redirects=False)
     assert resp.status_code == 200  # not redirected — it is on the allowlist
+    # the full nav is hidden during forced change, but a logout escape is offered
+    assert 'action="/auth/logout"' in resp.text
+
+
+def test_must_change_allows_account_password_subpath_not_sibling(app, repo) -> None:  # type: ignore[no-untyped-def]
+    # The allowlist matches whole paths / sub-paths, never a bare string prefix: a
+    # sibling like /account/password-reset must still be gated (redirected), not allowed.
+    from mediascanmonitor.web.deps import _on_must_change_allowlist
+
+    assert _on_must_change_allowlist("/account/password") is True
+    assert _on_must_change_allowlist("/account/password/confirm") is True
+    assert _on_must_change_allowlist("/auth/logout") is True
+    assert _on_must_change_allowlist("/account/password-reset") is False
+    assert _on_must_change_allowlist("/auth/logout-all") is False
 
 
 def test_must_change_allows_logout(app, repo) -> None:  # type: ignore[no-untyped-def]

@@ -80,8 +80,6 @@ def test_change_password_success(auth_client: TestClient, repo: Repo) -> None:
     )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
-    from mediascanmonitor.web.auth import check_password
-
     assert check_password(repo, "brand-new-pw")
 
 

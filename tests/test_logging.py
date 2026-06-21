@@ -1,6 +1,7 @@
 """Tests for structlog configuration and secret redaction (sub-plan 06)."""
 
 import json
+from collections.abc import Generator
 
 import pytest
 import structlog
@@ -9,7 +10,7 @@ from mediascanmonitor.observ.logging import _redact_secrets, configure_logging
 
 
 @pytest.fixture(autouse=True)
-def _reset_structlog():  # type: ignore[no-untyped-def]
+def _reset_structlog() -> Generator[None]:
     yield
     structlog.reset_defaults()
 

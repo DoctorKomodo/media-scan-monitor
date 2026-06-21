@@ -49,7 +49,13 @@ def _is_authed(request: Request) -> bool:
 
 # Paths an authenticated but must-change session may still reach (everything else
 # page-redirects to /account/password until the bootstrap password is rotated).
+# Matched as a whole path or a sub-path (prefix + "/"), never a bare string prefix, so a
+# future sibling like /account/password-reset is NOT accidentally allowlisted.
 _MUST_CHANGE_ALLOWLIST = ("/account/password", "/auth/logout")
+
+
+def _on_must_change_allowlist(path: str) -> bool:
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _MUST_CHANGE_ALLOWLIST)
 
 
 async def require_api_auth(request: Request) -> None:
@@ -68,13 +74,13 @@ async def require_api_auth(request: Request) -> None:
 async def require_page_auth(request: Request) -> None:
     repo = get_repo(request)
     if _is_authed(request):
-        if await asyncio.to_thread(auth.is_must_change, repo):
-            path = request.url.path
-            if not any(path.startswith(prefix) for prefix in _MUST_CHANGE_ALLOWLIST):
-                raise HTTPException(
-                    status_code=status.HTTP_303_SEE_OTHER,
-                    headers={"Location": "/account/password"},
-                )
+        if await asyncio.to_thread(auth.is_must_change, repo) and not _on_must_change_allowlist(
+            request.url.path
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_303_SEE_OTHER,
+                headers={"Location": "/account/password"},
+            )
         return
     location = "/login"
     if not await asyncio.to_thread(auth.is_password_set, repo):
