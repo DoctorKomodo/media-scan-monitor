@@ -13,6 +13,17 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       `secret is None`, so a tokenless save fails late with a backend `401` instead of being rejected
       at the form. Validate at the schema/UI boundary so the bad state can't be saved. Webhook is
       exempt — its `secret` is genuinely optional. → phase2-01/02 adapters; flagged in final review
+- [ ] `POST /auth/password` failure path renders `login.html` (no change-password template exists in
+      sub-plan 01). Once the settings/account page lands, switch the wrong-current-password error to
+      render that template instead. → phase3-01 Task 5; flagged in task review
+
+## Tooling / hygiene
+
+- [ ] Migrate `httpx` → `httpx2`: Starlette 1.3.x deprecates the httpx-backed `TestClient`
+      (`StarletteDeprecationWarning` from `tests/web/conftest.py`). The warning is suppressed via a
+      narrow `filterwarnings` ignore in `pyproject.toml`. Migration is project-wide (the server
+      adapters use `httpx` directly too) and must be evaluated per dep-rule 1 — not a Phase 3 task.
+      Remove the ignore once migrated. → phase3-01 Task 4 conftest
 
 ## Later — targeted scans for the non-Plex backends
 

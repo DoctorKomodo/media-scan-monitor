@@ -116,3 +116,9 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra"
+filterwarnings = [
+    # Starlette 1.3.x deprecates httpx-backed TestClient in favour of httpx2; migrating httpx→httpx2
+    # is project-wide (the adapters use httpx too) and out of scope here — tracked in FOLLOWUPS.
+    # Narrow ignore keeps web-test output pristine without masking other warnings.
+    "ignore:Using `httpx` with `starlette.testclient`:UserWarning",
+]
