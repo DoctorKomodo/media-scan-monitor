@@ -1,0 +1,30 @@
+:root { --fg: #1c2128; --muted: #57606a; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --line: #d0d7de; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: #f6f8fa; }
+.nav { display: flex; gap: 1rem; align-items: center; padding: .75rem 1.25rem; background: #fff;
+       border-bottom: 1px solid var(--line); }
+.nav a { text-decoration: none; color: var(--fg); font-weight: 600; }
+.nav a:hover { color: #0969da; }
+.nav-logout { margin-left: auto; }
+h1, h2, section { margin: 1rem 1.25rem; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; }
+label { display: block; margin: .4rem 0; }
+input, select, textarea { font: inherit; padding: .3rem .4rem; }
+button { font: inherit; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 6px;
+         background: #f3f4f6; cursor: pointer; }
+button:hover { background: #eaeef2; }
+button.danger { color: #fff; background: var(--err); border-color: var(--err); }
+.state { font-weight: 700; text-transform: uppercase; font-size: .8em; }
+.state-running { color: var(--ok); }
+.state-blocked { color: var(--warn); }
+.state-stopped, .state-starting { color: var(--muted); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .error { color: var(--err); font-weight: 600; }
+pre { background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px; padding: .5rem; overflow:auto; }
+.badge { font-size: .7em; background: #ddf4ff; color: #0969da; padding: .1rem .4rem; border-radius: 999px; }
+.server-table { border-collapse: collapse; width: calc(100% - 2.5rem); }
+.server-table th, .server-table td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); }
+.folder-list { list-style: none; padding: 0; }
+.folder-list li { padding: .5rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: .4rem; }
+#event-feed { list-style: none; padding: 0 1.25rem; font-family: ui-monospace, monospace; font-size: .85em; }
+.event { padding: .2rem 0; border-bottom: 1px solid var(--line); }
+.event-fail { color: var(--err); }

@@ -14,6 +14,7 @@ point across Phase 3 sub-plans).
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -60,6 +61,8 @@ def create_app(
     app.include_router(system_api.health_router)
     app.include_router(system_api.router)
     app.include_router(pages_router)
-    # sub-plan 04: app.mount("/static", StaticFiles(...))
+
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     return app
