@@ -30,7 +30,7 @@ dependencies = [
     "argon2-cffi==25.1.0",
     # Starlette SessionMiddleware signs the session cookie with itsdangerous (optional
     # Starlette dep, not installed transitively); python-multipart parses Form() POSTs.
-    # Both verified current-stable on PyPI at add-time (2026-06-20).
+    # Both verified current-stable on PyPI at add-time (2026-06-21).
     "itsdangerous==2.2.0",
     "python-multipart==0.0.32",
 ]

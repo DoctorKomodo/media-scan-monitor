@@ -29,13 +29,29 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 - [ ] `library_id` discovery dropdowns (needs a `ServerAdapter.list_libraries()` on the frozen ABC);
       the UI ships **free-text** `library_id` for now. → phase3 README decision 3
 
+### Cosmetic / low-priority (Phase 3 review carry-overs)
+
+- [ ] `ui_update_server` success renders the `_error.html` partial ("Saved." inside a
+      `role="alert"` element) — a screen reader announces a success as an alert. Give it a
+      `role="status"` `_ok.html` partial (or re-render the updated server partial). → phase3-04 Task 3
+- [ ] `Engine.rebuild()` logs `added=[]` on a `blocked→running` recovery even though the watcher's
+      effective roots genuinely went 0→N (it diffs against config paths, which were already the
+      desired set while blocked). Log fidelity only — no behavioral effect. Track last-applied roots
+      if the log accuracy matters. (Related, sanctioned: `start()` now builds adapters/clients before
+      the gate even on headless-blocked, then closes them — I/O-free per contract §I.) → phase3-03 Task 2
+
 ## Tooling / hygiene
 
-- [ ] Migrate `httpx` → `httpx2`: Starlette 1.3.x deprecates the httpx-backed `TestClient`
-      (`StarletteDeprecationWarning` from `tests/web/conftest.py`). The warning is suppressed via a
-      narrow `filterwarnings` ignore in `pyproject.toml`. Migration is project-wide (the server
-      adapters use `httpx` directly too) and must be evaluated per dep-rule 1 — not a Phase 3 task.
-      Remove the ignore once migrated. → phase3-01 Task 4 conftest
+- [ ] Migrate `httpx` → `httpx2`: Starlette 1.3.x's `TestClient` prefers `httpx2`, falling back to
+      `httpx` with a `StarletteDeprecationWarning` (suppressed via a narrow `filterwarnings` ignore in
+      `pyproject.toml`; remove the ignore once migrated). **Researched 2026-06-21:** `httpx2` is the
+      legitimate successor — authored by Tom Christie, now maintained by Pydantic
+      (github.com/pydantic/httpx2, latest 2.4.0) as `encode/httpx` goes quiet; API-compatible with our
+      usage. **BLOCKER:** `respx==0.23.1` (latest) supports only `httpx` (`httpx>=0.25.0`) and patches
+      httpx internals — it has NO httpx2 support. Our 9 `respx`-mocked adapter tests + the server
+      adapters use `httpx` in production, so a swap breaks the test layer until either respx ships
+      httpx2 support or those tests move to `httpx2.MockTransport`. Documented dep blocker (rule 1) —
+      revisit when respx supports httpx2. → phase3-01 Task 4 conftest
 
 ## Later — targeted scans for the non-Plex backends
 
