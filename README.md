@@ -86,16 +86,10 @@ the file the project maintains). Copy it from the repo (clone, or download
 - **Media bind-mount** — replace the placeholder `/path/to/media:/data/media:ro` with your own
   local media directory. ⚠️ **Local storage only — inotify does not work over NFS/SMB.** The
   container-side path (`/data/media/...`) must match what your media server (Plex, etc.) sees.
-- **First-run password** — the shipped file reads it from a Docker secret file
-  (`./msm_password.txt`, which is git-ignored). Create it:
-
-  ```bash
-  echo 'your-strong-password' > ./msm_password.txt
-  chmod 600 ./msm_password.txt
-  ```
-
-  (You can instead set `MSM_PASSWORD` inline in the compose `environment:`, but the secret file
-  keeps the password off the process environment.)
+- **First-run password (optional)** — by default the app generates a strong random admin
+  password on first boot; you do not need to create anything. To preset your own instead,
+  uncomment the `secrets:` blocks in `docker-compose.yml` and create `./msm_password.txt`
+  (`echo 'your-strong-password' > ./msm_password.txt && chmod 600 ./msm_password.txt`).
 
 To raise the kernel inotify watch limit, the file includes an opt-in, privileged `init-watches`
 profile — see [inotify watch limit](#inotify-watch-limit) below. It is **off** unless you run
@@ -109,9 +103,20 @@ docker compose up -d
 
 ### 4. Open the UI and log in
 
-Navigate to `http://<your-host>:8080`. On first run, if you provided a bootstrap password
-(the `msm_password.txt` secret file, or `MSM_PASSWORD`) the app uses it; otherwise the setup
-screen prompts you to create one. Log in.
+Navigate to `http://<your-host>:8080` and log in.
+
+### First login (auto-generated password)
+
+If you did not preset a password, the app generated one on first boot and wrote it to
+`/config/initial_password.txt` (owner-readable only). Retrieve it:
+
+```bash
+docker exec media-scan-monitor cat /config/initial_password.txt
+# or, via the bind mount:  cat ./config/initial_password.txt
+```
+
+Log in with that password at `http://<host>:8080`. You will be **required to change it**
+before you can use the app; once you do, the file is deleted automatically.
 
 ### 5. Add a server and a folder
 
@@ -141,8 +146,9 @@ stored in `app.db`.
 | `MSM_DB_PATH` | `/config/app.db` | SQLite database path. |
 | `MSM_SECRET_KEY_FILE` | `/config/secret.key` | Path to the Fernet key file used to encrypt server secrets at rest (auto-created if absent). Used only when `MSM_SECRET_KEY` is unset. |
 | `MSM_SECRET_KEY` | — | Fernet key provided inline. **Takes precedence over the key file** (`MSM_SECRET_KEY` > file > auto-generate). If set, it must match the key that originally encrypted `app.db` or stored secrets won't decrypt. |
-| `MSM_PASSWORD_FILE` | — | Path to a file containing the first-run password. File contents are whitespace-stripped. Takes precedence over `MSM_PASSWORD`. Never overwrites a password already set in the UI. |
-| `MSM_PASSWORD` | — | First-run password provided inline. Only used if `MSM_PASSWORD_FILE` is not set. Never overwrites a password already set in the UI. |
+| `MSM_PASSWORD_FILE` | — | Path to a file containing the first-run password. File contents are whitespace-stripped. Takes precedence over `MSM_PASSWORD`. Never overwrites a password already set in the UI. If either `MSM_PASSWORD_FILE` or `MSM_PASSWORD` is set, no password is generated and no forced change occurs. |
+| `MSM_PASSWORD` | — | First-run password provided inline. Only used if `MSM_PASSWORD_FILE` is not set. Never overwrites a password already set in the UI. If either `MSM_PASSWORD_FILE` or `MSM_PASSWORD` is set, no password is generated and no forced change occurs. |
+| `MSM_INITIAL_PASSWORD_FILE` | `/config/initial_password.txt` | Where the auto-generated first-run password is written (mode 0600). Defaults to the directory of `MSM_DB_PATH`. |
 | `TZ` | (system) | Container timezone, used for log timestamps. Set to your local zone (e.g. `Europe/London`, `America/New_York`). |
 
 ### Liveness check
@@ -280,9 +286,11 @@ Check `docker compose logs media-scan-monitor`. The container exits on startup o
 
 ### Can't log in / stored secrets won't decrypt
 
-- **Missing `MSM_PASSWORD_FILE` path** — the app falls back to the setup screen if the password
-  file is missing or unreadable. Verify the path exists, or clear `MSM_PASSWORD_FILE` and set
-  `MSM_PASSWORD` inline instead.
+- **Auto-generated password not working** — retrieve it from `/config/initial_password.txt`
+  (see [First login](#first-login-auto-generated-password)). The file is deleted after you
+  change the password; if it is missing you have already changed it once.
+- **Preset password (`MSM_PASSWORD_FILE`) not accepted** — verify the path exists and is readable
+  inside the container. Or remove `MSM_PASSWORD_FILE` and let auto-generation handle first login.
 - **`MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE` mismatch** — if you provide an inline key that
   does not match the key in `/config/secret.key`, decryption fails when a stored secret is used
   (e.g. testing a server). Either keep the key consistent or clear `MSM_SECRET_KEY` and let the

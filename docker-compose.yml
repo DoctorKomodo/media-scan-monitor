@@ -10,14 +10,14 @@
 #    The app writes app.db and secret.key here at startup; if ./config is not
 #    writable by UID 1000 the container will fail with a permission error.
 #
-# 2. Create the password file (chmod 600; already gitignored):
-#      echo "your-password-here" > ./msm_password.txt
-#      chmod 600 ./msm_password.txt
+# 2. Edit the media volume path(s) below — host paths MUST be local storage.
 #
-# 3. Edit the media volume path(s) below — host paths MUST be local storage.
-#
-# 4. Start:
+# 3. Start:
 #      docker compose up -d
+#    On first boot the app auto-generates a strong admin password and writes it
+#    to /config/initial_password.txt. Retrieve it with:
+#      docker exec media-scan-monitor cat /config/initial_password.txt
+#    You will be required to change it on first login.
 #
 # NOTE ON SYNOLOGY CONTAINER MANAGER
 # ------------------------------------
@@ -57,10 +57,14 @@ services:
       # Timezone — required for correct log timestamps.
       TZ: "Europe/Oslo"
 
-      # Password bootstrap: the app reads MSM_PASSWORD_FILE on first run to set
-      # the web UI password. After that, change the password through the UI.
-      # This variable points to the Docker secret mounted at /run/secrets/.
-      MSM_PASSWORD_FILE: "/run/secrets/msm_password"
+      # Password bootstrap is OPTIONAL. By default (nothing set here) the app
+      # generates a strong random admin password on first boot, writes it to
+      # /config/initial_password.txt (mode 0600), and forces you to change it
+      # on first login — see the README "First login" section.
+      # To preset a password instead, uncomment the secret below (and the
+      # service `secrets:` + top-level `secrets:` blocks) and create
+      # ./msm_password.txt:
+      # MSM_PASSWORD_FILE: "/run/secrets/msm_password"
       # Simpler alternative (no secrets block): set MSM_PASSWORD directly.
       # NEVER leave a real password inline here — use the secrets block above
       # or set MSM_PASSWORD as an environment variable in the shell that runs
@@ -116,8 +120,8 @@ services:
       # - /volume2/tvseries:/data/tvseries:ro
       # - /volume2/music:/data/music:ro
 
-    secrets:
-      - msm_password
+    # secrets:
+    #   - msm_password
 
     # The image already declares a HEALTHCHECK using in-image Python:
     #   GET http://127.0.0.1:8080/health → {"status":"ok"} (unauthenticated)
@@ -167,15 +171,14 @@ services:
       sysctl -w fs.inotify.max_user_watches=${MSM_INOTIFY_WATCHES:-131072}
 
 # ---------------------------------------------------------------------------
-# Secrets
+# Secrets (opt-in — commented out by default; auto-generation is the default)
 # ---------------------------------------------------------------------------
-secrets:
-  msm_password:
-    # File containing the initial web UI password.
-    # Create it before first run:
-    #   echo "your-password-here" > ./msm_password.txt
-    #   chmod 600 ./msm_password.txt
-    # (./msm_password.txt is already gitignored — never commit a real password.)
-    # After first login, change the password through the web UI; the file is
-    # only read on first boot when no password has been set yet.
-    file: ./msm_password.txt
+# To preset the first-run password using a Docker secret instead of
+# auto-generation, uncomment the entire block below, create the file, and
+# also uncomment the `secrets:` blocks in the service definition above:
+#   echo "your-password-here" > ./msm_password.txt
+#   chmod 600 ./msm_password.txt
+# (./msm_password.txt is already gitignored — never commit a real password.)
+# secrets:
+#   msm_password:
+#     file: ./msm_password.txt
