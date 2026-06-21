@@ -1,43 +1,181 @@
+# docker-compose.yml — media-scan-monitor
+#
+# Replaces the legacy plex-monitor Bash stack.
+#
+# QUICK START
+# -----------
+# 1. Create the config directory and chown it to the container's non-root UID:
+#      mkdir -p ./config
+#      chown -R 1000:1000 ./config        # UID 1000 = container user "app"
+#    The app writes app.db and secret.key here at startup; if ./config is not
+#    writable by UID 1000 the container will fail with a permission error.
+#
+# 2. Create the password file (chmod 600; add to .gitignore):
+#      echo "your-password-here" > ./msm_password.txt
+#      chmod 600 ./msm_password.txt
+#
+# 3. Edit the media volume path(s) below — host paths MUST be local storage.
+#
+# 4. Start:
+#      docker compose up -d
+#
+# NOTE ON SYNOLOGY CONTAINER MANAGER
+# ------------------------------------
+# Container Manager attempts to build the image when a "build:" key is present in
+# this file. Keep "build:" absent (commented out or omitted) and pull the published
+# image instead — do not uncomment the "build: ." line.
+
 services:
-  plex-monitor:
+
+  # ---------------------------------------------------------------------------
+  # Primary service
+  # ---------------------------------------------------------------------------
+  media-scan-monitor:
     # Pull the prebuilt image published by GitHub Actions.
-    image: ghcr.io/doctorkomodo/syno_plex_change_monitor:latest
-    # To build locally instead, uncomment the line below and run
-    # `docker compose build` / `docker compose up --build`. Leave it commented
-    # for normal use — Synology Container Manager tries to build on startup
-    # when this is present, which fails on the NAS.
+    # Tag "app-v2" is the pre-release branch tag published on app-v2 pushes.
+    # Once the rewrite is cut over to main, switch to a semver tag or "latest":
+    #   image: ghcr.io/doctorkomodo/media-scan-monitor:latest
+    #   image: ghcr.io/doctorkomodo/media-scan-monitor:v1.0.0
+    image: ghcr.io/doctorkomodo/media-scan-monitor:app-v2
+    # To build locally instead, uncomment the line below and comment out "image:"
+    # above, then run `docker compose build` / `docker compose up --build`.
+    # Leave it commented for normal use — Synology Container Manager tries to
+    # build on startup when this key is present, which fails on the NAS.
     # build: .
-    container_name: plex-monitor
+    container_name: media-scan-monitor
     restart: unless-stopped
 
+    # PID-1 / signal handling: "init: true" inserts a minimal init (tini) as
+    # PID 1, which reaps zombie processes and correctly forwards SIGTERM.
+    # Cheap robustness — always enable this.
+    init: true
+
+    ports:
+      - "8080:8080"
+
     environment:
-      # --- Plex connection ---------------------------------------------------
-      PLEX_SERVER: "https://192-168-0-8.667d51705797471ea1da1e6234ed9f7e.plex.direct:32400"
+      # Timezone — required for correct log timestamps.
+      TZ: "Europe/Oslo"
 
-      # --- Library map: <container-path>:<plex-section-id>, comma-separated ---
-      # These are the paths *inside this container* (and inside Plex). They must
-      # match how Plex sees the media so partial scans target the right folder.
-      PLEX_LIBRARIES: "/data/media/movies:1,/data/media/tvseries:2"
+      # Password bootstrap: the app reads MSM_PASSWORD_FILE on first run to set
+      # the web UI password. After that, change the password through the UI.
+      # This variable points to the Docker secret mounted at /run/secrets/.
+      MSM_PASSWORD_FILE: "/run/secrets/msm_password"
+      # Simpler alternative (no secrets block): set MSM_PASSWORD directly.
+      # NEVER leave a real password inline here — use the secrets block above
+      # or set MSM_PASSWORD as an environment variable in the shell that runs
+      # docker compose, e.g.:  MSM_PASSWORD=mypassword docker compose up -d
+      # MSM_PASSWORD: ""
 
-      # --- Tuning ------------------------------------------------------------
-      WAIT_SEC: "30"
-      IGNORE_DIRS: "@eaDir,#snapshot"
-      LOGFILE: "/dev/stdout"           # let `docker logs` capture output
-      TZ: "Europe/Oslo"                # for correct log timestamps
-
-      # --- Secret (read from a Docker secret file, never inline in env) -------
-      PLEX_TOKEN_FILE: "/run/secrets/plex_token"
+      # Optional overrides (defaults shown; uncomment to change):
+      # MSM_HOST: "0.0.0.0"
+      # MSM_PORT: "8080"
+      # MSM_DB_PATH: "/config/app.db"
+      # MSM_SECRET_KEY_FILE: "/config/secret.key"
 
     volumes:
-      # host (NAS) source : container target
-      # The container target must match the paths in PLEX_LIBRARIES (and how
-      # Plex sees the media). Sources must be local /volume2 paths for inotify.
-      - /volume2/movies:/data/media/movies
-      - /volume2/tvseries:/data/media/tvseries
+      # --- Config volume -------------------------------------------------------
+      # Holds app.db (SQLite database) and secret.key (Fernet encryption key).
+      #
+      # IMPORTANT: The container runs as non-root user "app" (UID 1000, GID 1000).
+      # The host directory ./config MUST be owned by UID 1000, or the app will
+      # fail at startup with a permission error when writing app.db / secret.key.
+      #
+      #   mkdir -p ./config
+      #   chown -R 1000:1000 ./config
+      #
+      # A named volume (no host path) inherits correct ownership automatically. To use one,
+      # replace the `- ./config:/config` line below with `- config:/config` AND declare a
+      # top-level volume (compose errors with "refers to undefined volume" otherwise) by adding
+      # at the bottom of this file:
+      #     volumes:
+      #       config:
+      #
+      # PERSISTENCE: Keep ./config (or the named volume) persistent across restarts.
+      # secret.key encrypts all server credentials stored in app.db; losing it
+      # makes every stored token undecryptable. Back up this directory.
+      - ./config:/config
+
+      # --- Media source volumes -----------------------------------------------
+      # Add one bind-mount per media directory you want monitored.
+      #
+      # CRITICAL — inotify requires LOCAL storage:
+      #   Sources MUST be local filesystem paths (e.g. /volume2/movies on Synology).
+      #   inotify does NOT work over network mounts (NFS, SMB/CIFS, FUSE, etc.).
+      #   If you mount a network share here, the watcher will start but never
+      #   receive events — see "No events ever seen?" in the README.
+      #
+      # The container path (/data/media/...) is what you configure as the watched
+      # folder path in the web UI, and it must match the path your media server
+      # (Plex, Emby, etc.) also uses to reference the same library.
+      #
+      # Example (replace /path/to/your/media with the real local path on this host):
+      - /path/to/your/media:/data/media:ro
+      #
+      # Add more mounts as needed:
+      # - /volume2/tvseries:/data/tvseries:ro
+      # - /volume2/music:/data/music:ro
 
     secrets:
-      - plex_token
+      - msm_password
 
+    # The image already declares a HEALTHCHECK using in-image Python:
+    #   GET http://127.0.0.1:8080/health → {"status":"ok"} (unauthenticated)
+    # Omitting a compose healthcheck here avoids duplicating/overriding the
+    # image's own tuned intervals. Docker will report the image's HEALTHCHECK
+    # status in `docker ps` and `docker inspect` without any compose override.
+
+  # ---------------------------------------------------------------------------
+  # Optional init sidecar — raises fs.inotify.max_user_watches (OPT-IN ONLY)
+  # ---------------------------------------------------------------------------
+  #
+  # This service is DISABLED by default. Enable it only with:
+  #   docker compose --profile init-watches up
+  #
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║  WARNING: THIS CONTAINER IS PRIVILEGED AND WRITES A HOST-GLOBAL VALUE  ║
+  # ║                                                                          ║
+  # ║  sysctl fs.inotify.max_user_watches affects ALL processes on the host,  ║
+  # ║  not just this container. Running this in a shared or multi-tenant       ║
+  # ║  environment may have unintended side effects.                           ║
+  # ║                                                                          ║
+  # ║  RECOMMENDED DEFAULT: set the sysctl at the host level instead:         ║
+  # ║    echo "fs.inotify.max_user_watches=131072" \                           ║
+  # ║         | sudo tee /etc/sysctl.d/99-inotify.conf                        ║
+  # ║    sudo sysctl --system                                                  ║
+  # ║                                                                          ║
+  # ║  On Synology DSM, set it in a boot task (Control Panel → Task Scheduler ║
+  # ║  → Triggered Task → Boot):                                               ║
+  # ║    echo 131072 > /proc/sys/fs/inotify/max_user_watches                  ║
+  # ║                                                                          ║
+  # ║  Use this sidecar ONLY if you cannot modify host-level sysctl            ║
+  # ║  (e.g. you are running Docker Desktop on macOS/Windows, or a managed    ║
+  # ║  host where you cannot write to /etc/sysctl.d).                          ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
+  init-watches:
+    profiles: ["init-watches"]
+    # busybox provides sysctl with a minimal image footprint (~4 MB).
+    image: busybox:stable
+    # privileged is REQUIRED to write kernel parameters from inside a container.
+    privileged: true
+    # One-shot: run sysctl, then exit. Never restart.
+    restart: "no"
+    # Raises fs.inotify.max_user_watches to MSM_INOTIFY_WATCHES (default 131072).
+    # Override by setting MSM_INOTIFY_WATCHES in the environment before running:
+    #   MSM_INOTIFY_WATCHES=262144 docker compose --profile init-watches up
+    command: >
+      sysctl -w fs.inotify.max_user_watches=${MSM_INOTIFY_WATCHES:-131072}
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
 secrets:
-  plex_token:
-    file: ./plex_token.txt    # gitignored; chmod 600 on the NAS
+  msm_password:
+    # File containing the initial web UI password.
+    # Create it before first run:
+    #   echo "your-password-here" > ./msm_password.txt
+    #   chmod 600 ./msm_password.txt
+    # Add ./msm_password.txt to .gitignore — never commit a real password.
+    # After first login, change the password through the web UI; the file is
+    # only read on first boot when no password has been set yet.
+    file: ./msm_password.txt
