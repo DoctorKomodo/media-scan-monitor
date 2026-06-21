@@ -94,6 +94,28 @@ def _write_initial_password_file(path: Path, value: str) -> None:
     path.chmod(0o600)  # enforce 0600 even if the file pre-existed with looser perms
 
 
+def _generate_and_store(repo: Repo, path: Path) -> None:
+    """Generate a strong password, write the retrievable 0600 file, then persist it as the
+    live must-change credential. The file is written BEFORE the hash + flag so a write
+    failure leaves any existing password intact (no lockout). NEVER logs the value (rule 5).
+    """
+    generated = generate_password()
+    _write_initial_password_file(path, generated)
+    repo.set_setting(MUST_CHANGE_KEY, "1")
+    set_password(repo, generated)
+
+
+def reset_to_generated_password(repo: Repo, path: Path) -> None:
+    """Unconditionally regenerate the admin password (forgot-password recovery).
+
+    Unlike ``bootstrap_password`` this does NOT check ``is_password_set`` — it overwrites
+    whatever is currently set, writes the new value to ``path`` (0600), sets the must-change
+    flag, and logs a distinct ``auth.password.reset`` event (path only, never the value).
+    """
+    _generate_and_store(repo, path)
+    log.info("auth.password.reset", path=str(path))
+
+
 def clear_initial_password(repo: Repo, path: Path) -> None:
     """Clear the must-change flag and best-effort delete the generated-password file."""
     repo.set_setting(MUST_CHANGE_KEY, "0")
@@ -126,18 +148,12 @@ def bootstrap_password(repo: Repo, *, initial_password_path: Path | None = None)
         set_password(repo, value)
         return
     # Nothing supplied → auto-generate and force a change on first login.
-    generated = generate_password()
     target = (
         initial_password_path
         if initial_password_path is not None
         else _resolve_initial_password_path()
     )
-    # Write the retrievable file FIRST, before persisting the hash. If the write fails the
-    # instance stays cleanly at first-run (is_password_set is still False, so the next startup
-    # retries) rather than locking the operator out with a password set but no way to read it.
-    _write_initial_password_file(target, generated)
-    repo.set_setting(MUST_CHANGE_KEY, "1")
-    set_password(repo, generated)
+    _generate_and_store(repo, target)
     log.info("auth.bootstrap.generated", path=str(target))
 
 

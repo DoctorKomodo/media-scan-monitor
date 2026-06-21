@@ -161,3 +161,39 @@ def test_clear_initial_password_tolerates_missing_file(repo: Repo, tmp_path: Pat
     repo.set_setting(auth.MUST_CHANGE_KEY, "1")
     auth.clear_initial_password(repo, tmp_path / "nope.txt")  # must not raise
     assert not auth.is_must_change(repo)
+
+
+def test_reset_regenerates_over_existing_password(repo: Repo, tmp_path: Path) -> None:
+    auth.set_password(repo, "old-pw")
+    assert not auth.is_must_change(repo)
+    pw_file = tmp_path / "initial_password.txt"
+
+    with structlog.testing.capture_logs() as logs:
+        auth.reset_to_generated_password(repo, pw_file)
+
+    # the old password no longer verifies; the generated one (from the file) does
+    assert not auth.check_password(repo, "old-pw")
+    assert auth.is_must_change(repo)
+    assert pw_file.exists()
+    assert (pw_file.stat().st_mode & 0o777) == 0o600
+    generated = pw_file.read_text(encoding="utf-8").strip()
+    assert auth.check_password(repo, generated)
+    # rule 5: a DISTINCT reset event carries the path, never the value
+    events = [e for e in logs if e.get("event") == "auth.password.reset"]
+    assert events and events[0]["path"] == str(pw_file)
+    assert all(generated not in str(e) for e in logs)
+
+
+def test_reset_write_failure_leaves_existing_password_intact(repo: Repo, tmp_path: Path) -> None:
+    auth.set_password(repo, "keep-me")
+    # parent is a regular FILE, so mkdir/open inside _write_initial_password_file raises OSError
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    bad_path = blocker / "initial_password.txt"
+
+    with pytest.raises(OSError):
+        auth.reset_to_generated_password(repo, bad_path)
+
+    # nothing was mutated: the old password still verifies and no must-change flag was set
+    assert auth.check_password(repo, "keep-me")
+    assert not auth.is_must_change(repo)
