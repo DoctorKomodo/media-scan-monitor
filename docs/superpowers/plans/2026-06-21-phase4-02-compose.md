@@ -14,13 +14,12 @@ sidecar that raises `fs.inotify.max_user_watches`.
 `media-scan-monitor` service is always active. The `init-watches` service is gated behind
 `profiles: ["init-watches"]` — completely absent from a plain `docker compose up` and only
 materialised when the user passes `--profile init-watches`. The sidecar is a one-shot that sets a
-host-global kernel value via `sysctl` and exits (`restart: "no"`); it runs before the main service
-starts in `--profile` mode because it has no `depends_on`, but Docker starts services in parallel
-by default. Add `depends_on: [init-watches]` only if sequencing is needed — compose profiles
-don't enforce ordering across profiles; the sidecar's `restart: "no"` means it exits cleanly. Note:
-the sidecar doesn't need `depends_on` wiring back to the main service — `sysctl` is effectively
-instantaneous and the app's own watch-limit gate (`watcher/watch_limit.py`) retries if the limit
-isn't yet raised.
+host-global kernel value via `sysctl` and exits (`restart: "no"`). It carries no `depends_on`, so
+Docker may start it concurrently with the main service rather than strictly before it — and that's
+fine: `sysctl` is effectively instantaneous, and if the main app happens to start first under a
+too-low limit it simply parks at zero watch roots (the inotify gate) and recovers on the next
+`rebuild()` (a UI config write) or restart, rather than crashing. Cross-profile `depends_on`
+wouldn't enforce ordering here anyway, so it's deliberately omitted.
 
 **Tech Stack:** Docker Compose v2 YAML (`services`, `secrets`, `profiles`). No Python, no new
 dependencies. Validation: `docker compose config` (lint/resolve). Commit: one task, one file.
@@ -160,8 +159,12 @@ services:
       #   mkdir -p ./config
       #   chown -R 1000:1000 ./config
       #
-      # A named volume (no host path) inherits correct ownership automatically:
-      #   - config:/config        # use this if you don't need host access to the DB
+      # A named volume (no host path) inherits correct ownership automatically. To use one,
+      # replace the `- ./config:/config` line below with `- config:/config` AND declare a
+      # top-level volume (compose errors with "refers to undefined volume" otherwise) by adding
+      # at the bottom of this file:
+      #     volumes:
+      #       config:
       #
       # PERSISTENCE: Keep ./config (or the named volume) persistent across restarts.
       # secret.key encrypts all server credentials stored in app.db; losing it
@@ -334,7 +337,7 @@ EOF
 | Sidecar base image | `busybox:stable` | Ships `sysctl`; ~4 MB; no shell interpreter needed beyond the one-liner command; `stable` tag is the busybox convention for the current release. Alpine would also work but adds ~3 MB and a package manager that isn't used. |
 | Compose `healthcheck:` block | Omitted | The image `Dockerfile` already declares a `HEALTHCHECK`; duplicating it in compose risks drift if timing is adjusted in the Dockerfile. Docker surfaces the image's own healthcheck in `docker ps`/`docker inspect` with no compose override needed. |
 | Sidecar `network_mode` | Not set (default bridge) | The sidecar only runs `sysctl` — it never opens a network socket, so no special networking is required. `network_mode: host` would be unnecessary. |
-| `depends_on` between sidecar and main | Not set | `sysctl` is near-instantaneous; the app's own watch-limit gate (`watcher/watch_limit.py`) retries if the limit isn't raised yet. Cross-profile `depends_on` in compose v2 has limited utility since profiles don't enforce ordered startup. Document instead. |
+| `depends_on` between sidecar and main | Not set | `sysctl` is near-instantaneous; if the app starts first under a low limit it parks at zero watch roots and recovers on the next `rebuild()`/restart (no crash). Cross-profile `depends_on` in compose v2 has limited utility since profiles don't enforce ordered startup. Document instead. |
 | Password secret | `secrets:` block → `msm_password.txt` | Mirrors the legacy `plex_token.txt` pattern; keeps the password off the process environment (rule 5); `MSM_PASSWORD` env var mentioned as comment-only fallback for simpler setups. |
 
 ## Cross-plan notes
