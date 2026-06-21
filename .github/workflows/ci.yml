@@ -8,6 +8,7 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'docker-compose.yml'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'docker-compose.yml'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -48,3 +50,10 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+      - name: Validate docker-compose.yml
+        run: |
+          if [ -f docker-compose.yml ]; then
+            docker compose config -q
+            docker compose --profile init-watches config -q
+          fi
