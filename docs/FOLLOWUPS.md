@@ -9,14 +9,25 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 - [x] ~~`Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery~~ — DONE in phase3-03 §I
       (`_gate_ok` + `start(park_when_blocked)` + gate-aware `rebuild()`; blocked = zero-root watcher,
       recovers with no restart). Opus-reviewed; four transitions tested.
-- [ ] Require a token when saving an auth-required server (Emby/Jellyfin/Audiobookshelf/Plex). The
-      Phase 2 adapters fall back to an empty credential (`Bearer `/`X-Emby-Token: ""`/`Token=""`) when
-      `secret is None`, so a tokenless save fails late with a backend `401` instead of being rejected
-      at the form. Validate at the schema/UI boundary so the bad state can't be saved. Webhook is
-      exempt — its `secret` is genuinely optional. → phase2-01/02 adapters; flagged in final review
+- [x] ~~Require a token when saving an auth-required server~~ — DONE: the shared write-cores
+      (`web/writes.py`, sub-plan 02) raise `422` when a `requires_secret` type (`SERVER_TYPE_SPECS`)
+      would be saved with no/empty secret (tri-state aware); the `/ui` form (sub-plan 04) softens that
+      to an inline error WITHOUT writing or rebuilding. Webhook exempt. JSON API + htmx both enforced.
 - [ ] `POST /auth/password` failure path renders `login.html` (no change-password template exists in
       sub-plan 01). Once the settings/account page lands, switch the wrong-current-password error to
       render that template instead. → phase3-01 Task 5; flagged in task review
+
+### Deferred UI polish (sub-plan 04)
+
+- [ ] Server **Test** button posts to the JSON `POST /api/servers/{id}/test` and shows raw JSON; a
+      prettier HTML twin (`/ui/servers/{id}/test`) is deferred. → phase3-04 dashboard plan
+- [ ] Dashboard/events **live-refresh** polish (poll `/api/status`, htmx SSE extension) — baseline
+      ships server-rendered status + a plain `EventSource` feed. → phase3-04 dashboard plan
+- [ ] Webhook **edit** form omits `webhook_method`/`webhook_headers_json`/`webhook_body_template`
+      (they're set at create but immutable via the UI afterward); add them to the server detail/edit
+      form. The `/ui` update handler already accepts them. → phase3-04 Task 2; flagged in task review
+- [ ] `library_id` discovery dropdowns (needs a `ServerAdapter.list_libraries()` on the frozen ABC);
+      the UI ships **free-text** `library_id` for now. → phase3 README decision 3
 
 ## Tooling / hygiene
 
