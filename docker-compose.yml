@@ -10,7 +10,7 @@
 #    The app writes app.db and secret.key here at startup; if ./config is not
 #    writable by UID 1000 the container will fail with a permission error.
 #
-# 2. Create the password file (chmod 600; add to .gitignore):
+# 2. Create the password file (chmod 600; already gitignored):
 #      echo "your-password-here" > ./msm_password.txt
 #      chmod 600 ./msm_password.txt
 #
@@ -175,7 +175,7 @@ secrets:
     # Create it before first run:
     #   echo "your-password-here" > ./msm_password.txt
     #   chmod 600 ./msm_password.txt
-    # Add ./msm_password.txt to .gitignore — never commit a real password.
+    # (./msm_password.txt is already gitignored — never commit a real password.)
     # After first login, change the password through the web UI; the file is
     # only read on first boot when no password has been set yet.
     file: ./msm_password.txt

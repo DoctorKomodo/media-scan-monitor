@@ -274,14 +274,19 @@ The app is running and healthy but no scan events appear in the Events feed:
 
 ### Container exits at startup
 
-Check `docker compose logs media-scan-monitor`. Common causes:
+Check `docker compose logs media-scan-monitor`. The container exits on startup only if:
 
 - **Permission error on `/config`** — `chown -R 1000:1000 ./config` (see above).
-- **`MSM_PASSWORD_FILE` points to a file that does not exist** — verify the path or switch to
-  `MSM_PASSWORD`.
+
+### Can't log in / stored secrets won't decrypt
+
+- **Missing `MSM_PASSWORD_FILE` path** — the app falls back to the setup screen if the password
+  file is missing or unreadable. Verify the path exists, or clear `MSM_PASSWORD_FILE` and set
+  `MSM_PASSWORD` inline instead.
 - **`MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE` mismatch** — if you provide an inline key that
-  does not match the key in `/config/secret.key`, stored secrets will not decrypt. Either keep
-  the file consistent or clear the env var and let the app use the file.
+  does not match the key in `/config/secret.key`, decryption fails when a stored secret is used
+  (e.g. testing a server). Either keep the key consistent or clear `MSM_SECRET_KEY` and let the
+  app use the file.
 
 ## Development
 
