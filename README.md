@@ -6,91 +6,288 @@ watcher fans out notifications to any number of configured **servers** — Plex,
 Jellyfin, Audiobookshelf, or a generic webhook — replacing the unreliable filesystem
 monitoring built into those servers.
 
-It is a **Python application, shipped as a Docker image**, configured from a **web UI**, with
-state in **SQLite**.
+It is a **Python application, shipped as a Docker image**, configured entirely from a
+**password-protected web UI** (no hand-edited config files for normal use), with state in
+**SQLite**.
 
-> **Status: under active development.** This is a ground-up rewrite (inspired by the original
-> `plex_monitor.sh` Bash script, kept in this repo as a behavioral reference — see
-> [Legacy](#legacy-bash-script)). **Phase 1 is complete**: the async engine, recursive inotify
-> watcher, SQLite store with encrypted secrets, the routing/debounce/dispatch pipeline, the
-> **Plex** adapter, and a headless CLI all work and are covered by tests. The web UI, the other
-> three server adapters, and the published Docker image land in later phases — see the
-> [Roadmap](#roadmap). Until then the engine runs headless and is configured via the database
-> directly.
+> **Image:** `ghcr.io/doctorkomodo/media-scan-monitor`
+> (published to GHCR; currently a pre-release on the `app-v2` tag while the rewrite is
+> validated on real hardware — the `latest` tag activates at cutover to `main`).
 
 ## Why?
 
 Media servers detect new files using filesystem notifications (inotify). Those notifications
-**do not propagate over network filesystems** like NFS or SMB — so when media is added to a NAS
-from another machine over the network, the server never sees the change, and new media doesn't
-appear until the next scheduled full scan.
+**do not propagate over network filesystems** like NFS or SMB — so when media is added to a
+NAS from another machine over the network, the server never sees the change, and new media
+doesn't appear until the next scheduled full scan.
 
-Running the watcher **directly on the machine that holds the files** (where local inotify events
-always fire), then calling each server's scan/refresh API for only the folder that changed, is
-the reliable fix. This project does that, and fans a single watch out to multiple servers at
-once.
+Running the watcher **directly on the machine that holds the files** (where local inotify
+events always fire), then calling each server's scan/refresh API for only the folder that
+changed, is the reliable fix. This project does that, and fans a single watch out to multiple
+servers at once.
 
 ## How it works
 
 ```
 inotify watcher ──> router ──> per-server debounce ──> dispatcher ──> server adapter(s)
-   (one watch          │             │                                  (Plex today;
-    per directory,      │             │                                   Emby/Jellyfin/
-    recursive)          │             └─ collapse a burst (e.g. copying    Audiobookshelf/
-                        │                a whole season) into one trigger  webhook upcoming)
+   (one watch          │             │                                  (Plex, Emby,
+    per directory,      │             │                                   Jellyfin,
+    recursive)          │             └─ collapse a burst (e.g. copying    Audiobookshelf,
+                        │                a whole season) into one trigger  or webhook)
                         └─ fan out to every (server, folder) whose path
                            prefixes the change and whose extensions match
 ```
 
-- **Domain model:** `Server (1) ──< Folder (N) ──< FileType (N)`. Each folder declares the host
-  path to watch, the backend library/section id, and which extensions to monitor.
-- **Routing:** the watch set is the deduplicated union of all enabled folder paths. On an event,
-  every `(server, folder)` whose path is a segment-prefix of the changed file *and* whose
-  extensions match becomes a subscriber; the event fans out to each.
+- **Domain model:** `Server (1) ──< Folder (N) ──< FileType (N)`. Each folder declares the
+  host path to watch, the backend library/section id, and which file extensions to monitor.
+- **Routing:** the watch set is the deduplicated union of all enabled folder paths. On an
+  event, every `(server, folder)` whose path is a segment-prefix of the changed file *and*
+  whose extensions match becomes a subscriber; the event fans out to each.
 - **Per-server debounce:** `trailing` collapses a burst per `(server, scan target)` into one
-  trigger after the folder settles (media-server default); `off` delivers every event (good for a
-  generic webhook).
-- **Scan targeting:** Plex does native folder-targeted scans (`?path=`). Emby, Jellyfin, and
-  Audiobookshelf can also target a path (via their media-updated / watcher-update endpoints), but
-  for now their adapters trigger a whole-library refresh; per-folder targeting for them is a planned
-  enhancement. Each adapter declares which scan modes it supports.
+  trigger after the folder settles (media-server default); `off` delivers every event (good
+  for a generic webhook).
+- **Scan targeting:** Plex does native folder-targeted scans (`?path=`). The other adapters
+  currently trigger a library refresh; per-folder targeting for them is a planned enhancement.
 - **inotify watch limit:** per-directory watches consume the kernel
-  `fs.inotify.max_user_watches` budget. A startup gate measures what the config needs versus the
-  current limit and blocks (with a clear remediation message) rather than silently under-watching.
+  `fs.inotify.max_user_watches` budget. A startup gate measures what the config needs versus
+  the current limit and blocks (with a clear remediation message in the dashboard) rather than
+  silently under-watching.
+- **Live reconfiguration:** UI writes commit to SQLite and call the engine to rebuild — no
+  restart needed.
 
 ### A note on paths
 
-A targeted scan sends the server a path, and **that path must match how the server itself sees
-the media**, not how the host sees it. If Plex runs in its own container with the library mounted
-at `/data/media/tvseries`, the monitor must also refer to the media as `/data/media/tvseries`.
-When running in Docker you bind-mount the source to those same paths inside the monitor
-container, so everything lines up. The host-side source of each mount is independent.
+A targeted scan sends the server a path, and **that path must match how the server itself
+sees the media**, not how the host sees it. If Plex runs in its own container with the
+library mounted at `/data/media/tvseries`, the monitor must also refer to the media as
+`/data/media/tvseries`. When running in Docker you bind-mount the source to those same paths
+inside the monitor container, so everything lines up.
 
-## Running it (headless, Phase 1)
+## Quickstart
+
+### 1. Prepare the config directory
 
 ```bash
-pip install -e .
-media-scan-monitor run --no-web
+mkdir -p ./config
+chown -R 1000:1000 ./config
 ```
 
-Configuration lives in a SQLite database (servers, folders, file types, settings). The web UI
-for managing it arrives in Phase 3; until then the database is populated programmatically.
+**The container runs as a non-root user (UID 1000).** The `./config` bind-mount must be owned
+by that UID or the app will fail at startup with a permission error when it tries to create
+`app.db` and `secret.key`. On Synology this is the most common first-run failure — chown
+the directory before starting.
 
-Startup reads only these environment variables (everything else is in the database):
+### 2. Get and edit the compose file
+
+The repo ships a ready-to-use `docker-compose.yml` (don't hand-write one — that would drift from
+the file the project maintains). Copy it from the repo (clone, or download
+`docker-compose.yml` from the `app-v2` branch) and edit two things before starting:
+
+- **Media bind-mount** — replace the placeholder `/path/to/media:/data/media:ro` with your own
+  local media directory. ⚠️ **Local storage only — inotify does not work over NFS/SMB.** The
+  container-side path (`/data/media/...`) must match what your media server (Plex, etc.) sees.
+- **First-run password** — the shipped file reads it from a Docker secret file
+  (`./msm_password.txt`, which is git-ignored). Create it:
+
+  ```bash
+  echo 'your-strong-password' > ./msm_password.txt
+  chmod 600 ./msm_password.txt
+  ```
+
+  (You can instead set `MSM_PASSWORD` inline in the compose `environment:`, but the secret file
+  keeps the password off the process environment.)
+
+To raise the kernel inotify watch limit, the file includes an opt-in, privileged `init-watches`
+profile — see [inotify watch limit](#inotify-watch-limit) below. It is **off** unless you run
+`docker compose --profile init-watches up`.
+
+### 3. Start the stack
+
+```bash
+docker compose up -d
+```
+
+### 4. Open the UI and log in
+
+Navigate to `http://<your-host>:8080`. On first run, if you provided a bootstrap password
+(the `msm_password.txt` secret file, or `MSM_PASSWORD`) the app uses it; otherwise the setup
+screen prompts you to create one. Log in.
+
+### 5. Add a server and a folder
+
+In the web UI:
+1. Go to **Servers → Add a server**. Pick the type (Plex, Emby, Jellyfin,
+   Audiobookshelf, or Webhook), fill in the base URL and API token, and save.
+2. On the server detail page, add a **Folder**: the path inside the container
+   (e.g. `/data/media/tv`), the library/section ID that server uses for it,
+   and the file extensions to watch (e.g. `mkv, mp4, avi`).
+
+The engine picks up the new config immediately — no restart.
+
+## Configuration
+
+**Everything is in the web UI, behind one password.** There are no hand-edited config files
+for normal operation. The container reads only deployment settings from the environment (paths,
+host/port, timezone, and the first-run password — see the table below); all *application* data
+(servers, folders, file types, debounce policy, inotify gate) is managed through the UI and
+stored in `app.db`.
+
+### Environment variable reference
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|---|---|---|
+| `MSM_HOST` | `0.0.0.0` | Listen address for the web UI. |
+| `MSM_PORT` | `8080` | Listen port for the web UI. |
 | `MSM_DB_PATH` | `/config/app.db` | SQLite database path. |
-| `MSM_SECRET_KEY_FILE` | `/config/secret.key` | Fernet key file used to encrypt server secrets at rest (auto-created if absent). |
-| `MSM_SECRET_KEY` | — | Fernet key provided directly (alternative to the file). |
+| `MSM_SECRET_KEY_FILE` | `/config/secret.key` | Path to the Fernet key file used to encrypt server secrets at rest (auto-created if absent). Used only when `MSM_SECRET_KEY` is unset. |
+| `MSM_SECRET_KEY` | — | Fernet key provided inline. **Takes precedence over the key file** (`MSM_SECRET_KEY` > file > auto-generate). If set, it must match the key that originally encrypted `app.db` or stored secrets won't decrypt. |
+| `MSM_PASSWORD_FILE` | — | Path to a file containing the first-run password. File contents are whitespace-stripped. Takes precedence over `MSM_PASSWORD`. Never overwrites a password already set in the UI. |
+| `MSM_PASSWORD` | — | First-run password provided inline. Only used if `MSM_PASSWORD_FILE` is not set. Never overwrites a password already set in the UI. |
+| `TZ` | (system) | Container timezone, used for log timestamps. Set to your local zone (e.g. `Europe/London`, `America/New_York`). |
 
-`media-scan-monitor run` without `--no-web` currently prints a message and exits non-zero — the
-web dashboard is not built yet.
+### Liveness check
 
-> **inotify only works on local storage.** Watched paths must live on a local filesystem on the
-> machine running the monitor; events do not fire for network-mounted sources.
+`GET http://<host>:8080/health` returns `{"status":"ok"}` when the app is running.
+This endpoint is unauthenticated and is used by Docker's built-in `HEALTHCHECK`.
+
+## Volumes
+
+### `/config` — persistent state
+
+The `/config` directory holds two files the app creates at startup:
+
+- `app.db` — the SQLite database: all servers, folders, file types, and settings.
+- `secret.key` — the Fernet encryption key used to encrypt server API tokens at rest.
+
+**Both files must persist across container restarts.** Use a bind-mount (`./config:/config`)
+or a named volume. A named volume inherits correct ownership automatically from the image; a
+host bind-mount requires `chown -R 1000:1000 ./config` (see [/config ownership](#config-ownership)).
+
+### `/config` ownership
+
+The container runs as a non-root user (`app`, **UID 1000**, GID 1000). If you use a host
+bind-mount for `/config`, the directory must be owned by UID 1000 or the app will fail at
+startup with a permission error:
+
+```bash
+mkdir -p ./config
+chown -R 1000:1000 ./config
+```
+
+On **Synology** NAS this is particularly important: bind-mounts from DSM default to root
+ownership. Create the `config` directory as root, then chown it before starting the container.
+
+### `secret.key` — back it up
+
+Server API tokens (Plex tokens, Emby API keys, etc.) are encrypted with Fernet using the key
+stored in `/config/secret.key`. If you lose this file or regenerate the key **all stored
+secrets become undecryptable** — you will need to re-enter every server token in the UI.
+
+Back up `secret.key` alongside `app.db`, or include `./config` in your regular backup
+rotation.
+
+### Media bind-mounts — local storage only
+
+```
+⚠ inotify does not work over network filesystems (NFS, SMB/CIFS, AFP).
+  Media sources must be bind-mounted from LOCAL storage on the machine running the container.
+```
+
+The watcher must see filesystem events directly — events do not propagate over a network
+mount. On a Synology NAS this means bind-mounting from a local volume (e.g. `/volume1/media`),
+not from a network share, even if the same content is accessible both ways.
+
+The container path you mount the media to must match the path your media servers use for the
+same content. See [A note on paths](#a-note-on-paths) above.
+
+## inotify watch limit
+
+The Linux kernel limits the number of inotify directory watches per user. The app derives
+`needed` from its configured watch directories and gates on `current ≥ needed` — if the
+kernel limit is too low, the watcher will not start and the dashboard surfaces the remediation.
+
+### Check the current limit and what the app needs
+
+Open the web UI → **Dashboard**. The status panel shows:
+- **Current kernel limit** (`fs.inotify.max_user_watches`)
+- **Needed** (derived from your configured folders)
+- **Recommended** (needed + headroom, the value to raise the limit to)
+
+### Option A — host-level sysctl (recommended, default)
+
+Raise the limit directly on the host. This is the standard approach and requires no
+privileged container.
+
+**Linux (sysctl.d drop-in, survives reboots):**
+
+```bash
+echo 'fs.inotify.max_user_watches = 131072' | sudo tee /etc/sysctl.d/99-msm-inotify.conf
+sudo sysctl --system
+```
+
+**Synology (root boot task):**
+
+In DSM → Task Scheduler → Create → Triggered task → Boot-up, as root:
+
+```sh
+echo 131072 > /proc/sys/fs/inotify/max_user_watches
+```
+
+After raising the limit, click **Re-check** on the Settings page in the UI. The engine will
+resume watching automatically.
+
+### Option B — opt-in init sidecar (privileged, host-global)
+
+The compose file ships an opt-in `init-watches` service that sets the limit once and exits.
+Enable it with:
+
+```bash
+docker compose --profile init-watches up
+```
+
+**Warning:** this sidecar runs as **privileged** and writes a **host-wide** kernel value that
+affects every process on the host, not just this container. Only use it if you are comfortable
+running privileged containers and understand the implications. Option A (host sysctl.d) is
+preferred.
+
+## Troubleshooting
+
+### "No events ever seen"
+
+The app is running and healthy but no scan events appear in the Events feed:
+
+1. **Check that the media bind-mount is local storage.** inotify events do not fire on
+   network-mounted filesystems (NFS, SMB). The bind-mount source must be a local path on the
+   machine running the container. See [Media bind-mounts — local storage only](#media-bind-mounts--local-storage-only).
+
+2. **Check the inotify watch limit.** Open Dashboard → the watch-limit panel shows whether the
+   limit is sufficient. If `current < needed`, the watcher is not running — raise the limit
+   (see [inotify watch limit](#inotify-watch-limit)) and click Re-check.
+
+3. **Check `/config` is writable.** If the startup log contains a permission error, the app
+   could not create `app.db` or `secret.key`. Fix: `chown -R 1000:1000 ./config` on the host.
+
+4. **Check the folder path and extensions.** On the server detail page, verify the folder path
+   matches the container's bind-mount path (e.g. `/data/media/tv`, not the host path
+   `/volume1/media/tv`), and that the file extensions list includes the type of files being
+   added.
+
+### Container exits at startup
+
+Check `docker compose logs media-scan-monitor`. Common causes:
+
+- **Permission error on `/config`** — `chown -R 1000:1000 ./config` (see above).
+- **`MSM_PASSWORD_FILE` points to a file that does not exist** — verify the path or switch to
+  `MSM_PASSWORD`.
+- **`MSM_SECRET_KEY` / `MSM_SECRET_KEY_FILE` mismatch** — if you provide an inline key that
+  does not match the key in `/config/secret.key`, stored secrets will not decrypt. Either keep
+  the file consistent or clear the env var and let the app use the file.
 
 ## Development
+
+See [`CLAUDE.md`](CLAUDE.md) for the project rules, architecture detail, module map,
+development commands (`ruff`, `mypy`, `pytest`), lint/style conventions, and the staged
+rollout phases. Design specs and implementation plans live under [`docs/`](docs/).
 
 ```bash
 pip install -e ".[dev]"   # install app + dev tooling
@@ -101,18 +298,7 @@ mypy mediascanmonitor     # type check (strict)
 pytest                    # tests
 ```
 
-CI runs all four on every push/PR and must stay green. See [`CLAUDE.md`](CLAUDE.md) for the
-project rules, architecture, the staged rollout, and the lint/style conventions; design specs
-and implementation plans live under [`docs/`](docs/).
-
-## Roadmap
-
-- **Phase 1 — engine core + DB + Plex** ✅ complete.
-- **Phase 2 — all server types:** Emby, Jellyfin, Audiobookshelf, and a generic webhook adapter.
-- **Phase 3 — web UI + API:** password-protected dashboard, full CRUD, test buttons, live event
-  feed, and live reconfiguration without a restart.
-- **Phase 4 — observability & packaging:** Prometheus metrics, dashboard widgets, and the
-  published multi-stage Docker image.
+CI runs all four on every push/PR and must stay green.
 
 ## Legacy bash script
 
