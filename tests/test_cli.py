@@ -51,15 +51,34 @@ def test_parser_exposes_no_web_flag() -> None:
 # --- Phase 1: `run` dispatch (revised + new) -------------------------------
 
 
-def test_run_without_no_web_prints_phase3_message(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Revised from the Phase-0 stub: clear message to stderr, exit code 2, no traceback.
-    code = main(["run"])
-    assert code == 2
-    err = capsys.readouterr().err
-    assert "Phase 3" in err
-    assert "--no-web" in err
+def test_run_without_no_web_invokes_serve_web(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MSM_HOST", raising=False)
+    monkeypatch.delenv("MSM_PORT", raising=False)
+    monkeypatch.setattr(cli_module, "_build_repo", lambda: cast(Repo, object()))
+    monkeypatch.setattr(cli_module, "_load_key", lambda: b"k" * 44)
+    monkeypatch.setattr(cli_module, "configure_logging", lambda **_: None)
+
+    captured: dict[str, object] = {}
+
+    async def fake_serve_web(
+        repo: Repo,
+        *,
+        host: str,
+        port: int,
+        session_secret: str,
+        stop_event: object | None = None,
+    ) -> int:
+        captured["host"] = host
+        captured["port"] = port
+        captured["session_secret"] = session_secret
+        return 0
+
+    monkeypatch.setattr(cli_module, "serve_web", fake_serve_web)
+
+    assert main(["run"]) == 0
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8080
+    assert captured["session_secret"] == ("k" * 44)  # Fernet key decoded to str
 
 
 def test_run_no_web_invokes_serve_headless(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,8 +1,7 @@
 """Command-line entrypoint.
 
-Phase 1 implements ``run --no-web`` (headless engine). The full web dashboard
-arrives in Phase 3; ``run`` without ``--no-web`` prints a clear message and
-exits non-zero rather than crashing.
+``run`` serves the web dashboard + engine on one event loop (Phase 3).
+``run --no-web`` runs the headless engine without the web layer.
 """
 
 import argparse
@@ -22,8 +21,9 @@ from mediascanmonitor.db.session import init_db, session_factory
 from mediascanmonitor.engine import Engine, EngineState
 from mediascanmonitor.observ.logging import configure_logging
 from mediascanmonitor.watcher.base import WatcherBackend
+from mediascanmonitor.web.server import serve_web
 
-__all__ = ["build_parser", "engine_module", "main", "serve_headless"]
+__all__ = ["build_parser", "engine_module", "main", "serve_headless", "serve_web"]
 
 _DEFAULT_DB_PATH = "/config/app.db"
 _DEFAULT_KEY_PATH = "/config/secret.key"
@@ -52,12 +52,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_key() -> bytes:
+    """Resolve the Fernet secret key (env value > file > generate).
+
+    Returns the urlsafe-base64 key bytes.
+    """
+    key_path = Path(os.environ.get("MSM_SECRET_KEY_FILE", _DEFAULT_KEY_PATH))
+    env_key = os.environ.get("MSM_SECRET_KEY")
+    return load_or_create_key(key_path, env_key=env_key)
+
+
 def _build_repo() -> Repo:
     """Assemble the repository from env/Docker config. Raises on misconfiguration."""
-    key_path = Path(os.environ.get("MSM_SECRET_KEY_FILE", _DEFAULT_KEY_PATH))
     db_path = Path(os.environ.get("MSM_DB_PATH", _DEFAULT_DB_PATH))
-    env_key = os.environ.get("MSM_SECRET_KEY")
-    box = SecretBox(load_or_create_key(key_path, env_key=env_key))
+    box = SecretBox(_load_key())
     engine = init_db(db_path)  # returns the Engine (contract §4); not a factory
     return Repo(session_factory(engine), box)
 
@@ -103,22 +111,20 @@ async def serve_headless(
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    if not args.no_web:
-        print(
-            "The web dashboard arrives in Phase 3. Re-run with `--no-web` to start "
-            "the headless engine.",
-            file=sys.stderr,
-        )
-        return 2
-
     try:
         repo = _build_repo()
+        session_secret = "" if args.no_web else _load_key().decode("ascii")
     except Exception as exc:  # fail fast with a clear message, not a traceback
         print(f"startup error: {exc}", file=sys.stderr)
         return 1
 
     configure_logging()
-    return asyncio.run(serve_headless(repo))  # 0 clean, 3 if the inotify gate blocked startup
+    if args.no_web:
+        return asyncio.run(serve_headless(repo))  # 0 clean, 3 if the inotify gate blocked startup
+
+    host = os.environ.get("MSM_HOST", "0.0.0.0")
+    port = int(os.environ.get("MSM_PORT", "8080"))
+    return asyncio.run(serve_web(repo, host=host, port=port, session_secret=session_secret))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
