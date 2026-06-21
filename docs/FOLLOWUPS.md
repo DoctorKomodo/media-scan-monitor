@@ -72,14 +72,39 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       scheduled into any phase** — promote it to a phase only on an actual request. → docs/PLAN.md
       "Appendix — Architecture validation: path mapping (NOT scheduled; exploration only)"
 
-## Phase 4 — observability & image
+## Phase 4 — deployment & release readiness
 
-- [ ] Verify `mediascanmonitor/migrations/` (incl. `script.py.mako` + `versions/*.py`) ships in
-      the wheel/image; add a Hatchling `[tool.hatch.build.targets.wheel.force-include]` if its
-      default drops them. → contract §2 (covered by the image smoke test)
+- [x] ~~Verify `mediascanmonitor/migrations/` (incl. `script.py.mako` + `versions/*.py`) ships
+      in the wheel/image~~ — DONE in phase4-01 (wheel-contents regression guard in
+      `tests/build/test_wheel_contents.py` asserts migrations + templates + static + `py.typed`
+      stay present; Hatchling ships them by default — no `force-include` added). Also covered by
+      the image smoke test (phase4-03) which asserts `app.db` is at Alembic head after first boot.
 - [ ] inotify resilience runbook: privileged `IN_Q_OVERFLOW` / `ENOSPC` reproduction (lower
       `fs.inotify.max_queued_events` / `max_user_watches` in a throwaway container) + a
-      real-NAS bulk-import smoke. → 04 self-review
+      real-NAS bulk-import smoke. Can't run in CI; surfaced in README troubleshooting section
+      instead. → 04 self-review
+
+### Phase 4b — observability polish (deferred; do not build in Phase 4)
+
+These items were in scope in `docs/PLAN.md` Phase 4 but were deliberately descoped so the
+deployment / release-readiness half ships first. Promote to a phase when there is a concrete
+request.
+
+- [ ] **Prometheus `/metrics` endpoint** — structured per-server dispatch metrics (success/fail
+      count, latency histograms). Deferred from Phase 4 per `docs/superpowers/specs/2026-06-21-phase4-deployment-design.md`
+      §Scope. → Phase 4b
+- [ ] **Dashboard widgets** — watch count, per-server health / latency / last-dispatch shown on
+      the dashboard and server detail pages. Requires the `/metrics` data or a `/api/status`
+      extension. → Phase 4b
+- [ ] **Extension presets** — common file-extension sets (video, music, audiobooks) surfaced as
+      UI presets rather than free-text entry. → Phase 4b
+- [ ] **Optional auth hardening** — e.g. TOTP second factor, session expiry, or per-IP login
+      lockout persistence (currently in-memory only). → Phase 4b
+- [ ] **GitHub-repo + local-dir rename at cutover** — the published image is already
+      `media-scan-monitor` (decoupled in `docker-build.yml`), but the GitHub repository is still
+      `syno_plex_change_monitor` and the local working directory matches. Rename both when `app-v2`
+      merges to `main` as the "viable replacement" cutover. Document the remote-URL update step.
+      → phase4-deployment-design §2 locked decision 2
 
 ## During implementation (heads-up, not deferred work)
 
