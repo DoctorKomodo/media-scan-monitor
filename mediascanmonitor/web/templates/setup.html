@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}First-run setup — media-scan-monitor{% endblock %}
+{% block content %}
+<h1>Set an admin password</h1>
+<p>No password is set yet. Choose one to secure the dashboard.</p>
+<form method="post" action="/setup">
+  <label>Password <input type="password" name="password" autofocus required /></label>
+  <button type="submit">Create password</button>
+</form>
+{% endblock %}

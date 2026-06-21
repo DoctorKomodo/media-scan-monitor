@@ -7,24 +7,28 @@ The password is stored as an Argon2 PHC string in the ``Setting`` table under
 password from the environment but NEVER logs the value (rule 5) and never overwrites a
 password already set in the UI.
 
-``router`` is a stub (empty APIRouter) in Task 4; Task 5 replaces it with the real
-auth routes (/auth/login, /auth/logout, /setup).
+CSRF (contract §C): these POSTs are authenticated by the ``same_site="lax"`` session
+cookie, which the browser withholds on cross-site POSTs — that is the deliberate CSRF
+defense, so no CSRF token is used. The omission is intentional, not an oversight.
 """
 
+import asyncio
 import os
 from pathlib import Path
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Form, Request, status
+from fastapi.responses import RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
 
 from mediascanmonitor.db.repo import Repo
+from mediascanmonitor.web.deps import get_repo, get_templates, require_page_auth
+from mediascanmonitor.web.ratelimit import LoginRateLimiter
 
 PASSWORD_HASH_KEY = "password_hash"
 
 _hasher = PasswordHasher()  # library defaults
-
-router = APIRouter()
 
 
 def hash_password(password: str) -> str:
@@ -76,3 +80,111 @@ def bootstrap_password(repo: Repo) -> None:
 
 def _read_secret_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8").strip()
+
+
+router = APIRouter()
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client is not None else "unknown"
+
+
+def _limiter(request: Request) -> LoginRateLimiter:
+    limiter: LoginRateLimiter = request.app.state.limiter
+    return limiter
+
+
+@router.get("/login")
+async def login_page(
+    request: Request,
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    return templates.TemplateResponse(request, "login.html", {"error": None})
+
+
+@router.post("/auth/login")
+async def login(
+    request: Request,
+    password: str = Form(...),
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    limiter = _limiter(request)
+    key = _client_ip(request)
+    if not limiter.allowed(key):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Too many attempts. Try again later."},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    if await asyncio.to_thread(check_password, repo, password):
+        limiter.reset(key)
+        request.session["authed"] = True
+        return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    limiter.record_failure(key)
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"error": "Incorrect password."},
+        status_code=status.HTTP_401_UNAUTHORIZED,
+    )
+
+
+@router.post("/auth/logout", dependencies=[Depends(require_page_auth)])
+async def logout(request: Request) -> Response:
+    request.session.clear()
+    return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/auth/password", dependencies=[Depends(require_page_auth)])
+async def change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    if not await asyncio.to_thread(check_password, repo, current_password):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Current password is incorrect."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    # no rebuild: auth is not engine config
+    await asyncio.to_thread(set_password, repo, new_password)
+    return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/setup")
+async def setup_page(
+    request: Request,
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    if await asyncio.to_thread(is_password_set, repo):
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(request, "setup.html", {"error": None})
+
+
+@router.post("/setup")
+async def setup(
+    request: Request,
+    password: str = Form(...),
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    if await asyncio.to_thread(is_password_set, repo):
+        # setup can never reset an existing password
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    if not password.strip():
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"error": "Password must not be empty."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    await asyncio.to_thread(set_password, repo, password)
+    request.session["authed"] = True
+    return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
