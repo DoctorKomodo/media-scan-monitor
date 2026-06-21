@@ -19,7 +19,7 @@ from sqlmodel import Session, col, select
 
 from mediascanmonitor.db.crypto import SecretBox
 from mediascanmonitor.db.models import FileType, Folder, Server, Setting
-from mediascanmonitor.db.schemas import FolderCreate, ServerCreate, ServerUpdate
+from mediascanmonitor.db.schemas import FolderCreate, FolderUpdate, ServerCreate, ServerUpdate
 from mediascanmonitor.normalize import normalize_extension
 
 
@@ -114,6 +114,45 @@ class Repo:
             for folder in folders:
                 _ = folder.filetypes  # force-load while the session is open
             return folders
+
+    def get_folder(self, folder_id: int) -> Folder | None:
+        with self._session_factory() as session:
+            folder = session.get(Folder, folder_id)
+            if folder is not None:
+                _ = folder.filetypes  # force-load while the session is open
+            return folder
+
+    def update_folder(self, folder_id: int, data: FolderUpdate) -> Folder:
+        # exclude_unset tri-state mirrors update_server: an omitted field is left unchanged;
+        # extensions present (a list, incl. []) replaces all FileType rows; explicit
+        # None is a no-op.
+        with self._session_factory() as session:
+            folder = session.get(Folder, folder_id)
+            if folder is None:
+                raise KeyError(f"folder {folder_id} not found")
+            fields = data.model_dump(exclude_unset=True)
+            new_exts = fields.pop("extensions", None)
+            for key, value in fields.items():
+                setattr(folder, key, value)
+            if new_exts is not None:
+                # delete-orphan cascade deletes the removed rows AND empties the
+                # in-memory collection. Do NOT session.delete() each child and append
+                # into the same collection — the cascade re-touches deleted instances
+                # and SQLAlchemy raises InvalidRequestError. clear() is the safe idiom.
+                folder.filetypes.clear()
+                # same normalize rule as set_filetypes (raw list[str]).
+                normalized: list[str] = []
+                for ext in new_exts:
+                    norm = normalize_extension(ext)
+                    if norm and norm not in normalized:
+                        normalized.append(norm)
+                for ext in normalized:
+                    # folder_id set by the relationship
+                    folder.filetypes.append(FileType(extension=ext))
+            session.add(folder)
+            session.commit()
+            _ = folder.filetypes  # force-load while the session is open
+            return folder
 
     def delete_folder(self, folder_id: int) -> None:
         with self._session_factory() as session:

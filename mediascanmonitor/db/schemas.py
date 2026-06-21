@@ -77,3 +77,34 @@ class FolderCreate(BaseModel):
             if norm and norm not in out:
                 out.append(norm)
         return out
+
+
+class FolderUpdate(BaseModel):
+    path: str | None = None
+    library_id: str | None = None
+    extensions: list[str] | None = None
+    enabled: bool | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _normalize_and_require_absolute(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_path(value)
+        if not os.path.isabs(normalized):
+            raise ValueError(f"folder path must be absolute, got {value!r}")
+        return normalized
+
+    @field_validator("extensions")
+    @classmethod
+    def _normalize_extensions(cls, value: list[str] | None) -> list[str] | None:
+        # Same rule as FolderCreate: normalize, drop empties, dedupe (order-preserving).
+        # None == "field omitted / leave unchanged"; [] == "clear all filetypes".
+        if value is None:
+            return None
+        out: list[str] = []
+        for ext in value:
+            norm = normalize_extension(ext)
+            if norm and norm not in out:
+                out.append(norm)
+        return out
