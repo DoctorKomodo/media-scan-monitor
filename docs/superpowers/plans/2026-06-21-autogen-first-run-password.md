@@ -21,6 +21,15 @@
   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_016PcFMagbvJJEdNz1QWUEKU
   ```
+- **Write-order safety (auto-gen branch):** write the `initial_password.txt` file *before*
+  persisting the password hash + flag. A write failure must leave the instance at clean first-run
+  (`is_password_set` still `False`, next startup retries), never password-set-but-file-missing —
+  that state is a permanent lockout (`bootstrap` is a no-op once a password exists, so it never
+  regenerates or rewrites the file).
+- **`web/server.py` needs no change** — `bootstrap_password`'s new `initial_password_path`
+  defaults to `None` and resolves internally, so the existing `bootstrap_password(repo)` call keeps
+  working. (The design spec's Files table still lists `server.py`; that row is stale — internal
+  default-resolution supersedes it.)
 - Branch `app-v2`; **no `main` merge.** No new dependencies (all stdlib/existing).
 
 ---
@@ -220,14 +229,17 @@ def bootstrap_password(repo: Repo, *, initial_password_path: Path | None = None)
         return
     # Nothing supplied → auto-generate and force a change on first login.
     generated = generate_password()
-    set_password(repo, generated)
-    repo.set_setting(MUST_CHANGE_KEY, "1")
     target = (
         initial_password_path
         if initial_password_path is not None
         else _resolve_initial_password_path()
     )
+    # Write the retrievable file FIRST, before persisting the hash. If the write fails the
+    # instance stays cleanly at first-run (is_password_set is still False, so the next startup
+    # retries) rather than locking the operator out with a password set but no way to read it.
     _write_initial_password_file(target, generated)
+    repo.set_setting(MUST_CHANGE_KEY, "1")
+    set_password(repo, generated)
     log.info("auth.bootstrap.generated", path=str(target))
 ```
 
@@ -267,6 +279,7 @@ EOF
 - Create: `mediascanmonitor/web/templates/change_password.html`
 - Modify: `mediascanmonitor/web/auth.py` (replace `POST /auth/password` with `GET`+`POST /account/password`)
 - Modify: `mediascanmonitor/web/templates/settings.html` (add a link)
+- Modify: `docs/FOLLOWUPS.md` (remove the now-closed change-pw item)
 - Test: `tests/web/test_auth_routes.py`
 
 **Interfaces:**
@@ -376,9 +389,10 @@ Expected: the `/account/password` tests FAIL with 404 (route not defined yet).
 {% if not must_change %}{% include "_nav.html" %}{% endif %}
 <h1>Change password</h1>
 {% if must_change %}
-<p class="alert" role="alert">You must change the auto-generated password before continuing.</p>
+<p class="error" role="alert">You must change the auto-generated password before continuing.</p>
 {% endif %}
-{% if error %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+{# `error` is rendered by base.html at the top of <body>; do NOT repeat it here (base uses
+   class="error", and there is no "alert" class in app.css). #}
 <form method="post" action="/account/password" class="card">
   <label>Current password
     <input type="password" name="current_password" required autocomplete="current-password">
@@ -453,7 +467,19 @@ Insert this `<section>` after the closing `</section>` of the "Status" card (bef
 </section>
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 6: Remove the now-closed FOLLOWUPS item**
+
+This task closes the deferred Phase 3 bug (the `POST /auth/password` error path re-rendered
+`login.html` because no change-password template existed). Per CLAUDE.md rule 9, delete its pointer
+from `docs/FOLLOWUPS.md` — the three-line item beginning:
+
+```
+- [ ] `POST /auth/password` failure path renders `login.html` (no change-password template exists in
+```
+
+(through its `→ phase3-01 Task 5; flagged in task review` line). Leave the surrounding items intact.
+
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/web/test_auth_routes.py -v`
 Expected: PASS.
@@ -462,10 +488,10 @@ Gate:
 Run: `uv run ruff format mediascanmonitor/web/auth.py tests/web/test_auth_routes.py && uv run ruff check mediascanmonitor/web/auth.py tests/web/test_auth_routes.py && uv run mypy mediascanmonitor`
 Expected: clean.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add mediascanmonitor/web/auth.py mediascanmonitor/web/templates/change_password.html mediascanmonitor/web/templates/settings.html tests/web/test_auth_routes.py
+git add mediascanmonitor/web/auth.py mediascanmonitor/web/templates/change_password.html mediascanmonitor/web/templates/settings.html docs/FOLLOWUPS.md tests/web/test_auth_routes.py
 git commit -m "$(cat <<'EOF'
 feat(auth): /account/password change page (current+new+confirm)
 
@@ -474,7 +500,7 @@ Move the change-password handler from POST /auth/password to a single
 submit. Wrong-current / empty / mismatch re-render the change-password
 template (fixes the deferred Phase 3 bug that re-rendered login.html). On
 success, clear the must_change flag and delete the generated-password file.
-Add a Settings link.
+Add a Settings link and remove the now-closed FOLLOWUPS entry.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_016PcFMagbvJJEdNz1QWUEKU
