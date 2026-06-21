@@ -25,6 +25,7 @@ from mediascanmonitor.web.api import events as api_events
 from mediascanmonitor.web.api import folders as api_folders
 from mediascanmonitor.web.api import servers as api_servers
 from mediascanmonitor.web.api import system as system_api
+from mediascanmonitor.web.pages import router as pages_router
 from mediascanmonitor.web.ratelimit import LoginRateLimiter
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -58,6 +59,7 @@ def create_app(
     app.include_router(api_events.router)
     app.include_router(system_api.health_router)
     app.include_router(system_api.router)
-    # sub-plan 04: app.include_router(pages.router); app.mount("/static", StaticFiles(...))
+    app.include_router(pages_router)
+    # sub-plan 04: app.mount("/static", StaticFiles(...))
 
     return app
