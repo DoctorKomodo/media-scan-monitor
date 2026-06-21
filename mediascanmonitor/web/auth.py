@@ -6,6 +6,9 @@ The password is stored as an Argon2 PHC string in the ``Setting`` table under
 ``password_hash`` — never in the clear. ``bootstrap_password`` seeds a first-run
 password from the environment but NEVER logs the value (rule 5) and never overwrites a
 password already set in the UI.
+
+``router`` is a stub (empty APIRouter) in Task 4; Task 5 replaces it with the real
+auth routes (/auth/login, /auth/logout, /setup).
 """
 
 import os
@@ -13,12 +16,15 @@ from pathlib import Path
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from fastapi import APIRouter
 
 from mediascanmonitor.db.repo import Repo
 
 PASSWORD_HASH_KEY = "password_hash"
 
 _hasher = PasswordHasher()  # library defaults
+
+router = APIRouter()
 
 
 def hash_password(password: str) -> str:
