@@ -105,7 +105,7 @@ docker compose up -d
 
 Navigate to `http://<your-host>:8080` and log in.
 
-### First login (auto-generated password)
+#### First login (auto-generated password)
 
 If you did not preset a password, the app generated one on first boot and wrote it to
 `/config/initial_password.txt` (owner-readable only). Retrieve it:

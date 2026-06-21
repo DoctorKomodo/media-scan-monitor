@@ -97,8 +97,9 @@ def test_bootstrap_no_env_now_autogenerates(
 def test_bootstrap_empty_env_values_autogenerate(
     repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    for var in ("MSM_PASSWORD", "MSM_PASSWORD_FILE", "MSM_INITIAL_PASSWORD_FILE", "MSM_DB_PATH"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("MSM_PASSWORD", "   ")  # whitespace-only → treated as unset
-    monkeypatch.delenv("MSM_PASSWORD_FILE", raising=False)
     auth.bootstrap_password(repo, initial_password_path=tmp_path / "initial_password.txt")
     assert auth.is_password_set(repo)
     assert auth.is_must_change(repo)
