@@ -181,3 +181,67 @@ def test_setup_blocked_once_password_exists(app, repo: Repo) -> None:  # type: i
     assert post_resp.headers["location"] == "/login"
     assert check_password(repo, "already") is True  # not overwritten
     assert check_password(repo, "hijack") is False
+
+
+def test_get_reset_password_renders_confirm_page(client: TestClient) -> None:
+    # a locked-out admin is unauthenticated — the confirm page must still be reachable
+    resp = client.get("/auth/reset-password")
+    assert resp.status_code == 200
+    assert "Reset password" in resp.text
+    assert "/config/initial_password.txt" in resp.text  # tells the admin where to read it
+
+
+def test_post_reset_regenerates_and_redirects(
+    app,
+    repo: Repo,
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from mediascanmonitor.web.auth import MUST_CHANGE_KEY, check_password, set_password
+
+    pw_file = tmp_path / "initial_password.txt"
+    monkeypatch.setenv("MSM_INITIAL_PASSWORD_FILE", str(pw_file))
+    set_password(repo, "old-pw")
+
+    client = TestClient(app)
+    resp = client.post("/auth/reset-password", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login?reset=1"
+    assert repo.get_setting(MUST_CHANGE_KEY) == "1"
+    assert pw_file.exists()
+    generated = pw_file.read_text(encoding="utf-8").strip()
+    assert check_password(repo, generated)
+    assert not check_password(repo, "old-pw")
+    assert generated not in resp.text  # rule 5: value never in the response body
+
+
+def test_post_reset_is_rate_limited(
+    app,
+    repo: Repo,
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from mediascanmonitor.web.auth import check_password, set_password
+
+    pw_file = tmp_path / "initial_password.txt"
+    monkeypatch.setenv("MSM_INITIAL_PASSWORD_FILE", str(pw_file))
+    set_password(repo, "old-pw")
+
+    client = TestClient(app)
+    # reset_limiter default max_attempts=3: first 3 succeed (303), the 4th is throttled
+    for _ in range(3):
+        r = client.post("/auth/reset-password", follow_redirects=False)
+        assert r.status_code == 303
+    blocked = client.post("/auth/reset-password", follow_redirects=False)
+    assert blocked.status_code == 429
+    # the throttled call did NOT regenerate again: the file still holds the 3rd reset's value
+    generated = pw_file.read_text(encoding="utf-8").strip()
+    assert check_password(repo, generated)
+
+
+def test_login_page_shows_reset_link_and_banner(client: TestClient) -> None:
+    plain = client.get("/login")
+    assert plain.status_code == 200
+    assert "/auth/reset-password" in plain.text  # the "Forgot password?" link
+    banner = client.get("/login?reset=1")
+    assert "written to" in banner.text  # the post-reset info banner text

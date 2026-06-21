@@ -46,6 +46,10 @@ def create_app(
     app.state.events_bus = events_bus
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     app.state.limiter = LoginRateLimiter()
+    # A SECOND limiter, dedicated to the unauthenticated /auth/reset-password POST, kept
+    # separate from the login limiter so reset attempts never trip the login lockout (and
+    # vice-versa). Stricter: 3 resets per hour per IP.
+    app.state.reset_limiter = LoginRateLimiter(max_attempts=3, window_seconds=3600.0)
 
     app.add_middleware(
         SessionMiddleware,

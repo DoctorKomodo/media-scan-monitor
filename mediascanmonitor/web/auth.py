@@ -173,12 +173,23 @@ def _limiter(request: Request) -> LoginRateLimiter:
     return limiter
 
 
+def _reset_limiter(request: Request) -> LoginRateLimiter:
+    limiter: LoginRateLimiter = request.app.state.reset_limiter
+    return limiter
+
+
 @router.get("/login")
 async def login_page(
     request: Request,
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+    info = (
+        "A new password was generated and written to the initial-password file on the host. "
+        "Retrieve it, then sign in — you will be asked to change it."
+        if request.query_params.get("reset") == "1"
+        else None
+    )
+    return templates.TemplateResponse(request, "login.html", {"error": None, "info": info})
 
 
 @router.post("/auth/login")
@@ -214,6 +225,42 @@ async def login(
 async def logout(request: Request) -> Response:
     request.session.clear()
     return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/auth/reset-password")
+async def reset_password_page(
+    request: Request,
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    return templates.TemplateResponse(request, "reset_password.html", {"error": None})
+
+
+@router.post("/auth/reset-password")
+async def reset_password(
+    request: Request,
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    limiter = _reset_limiter(request)
+    key = _client_ip(request)
+    if not limiter.allowed(key):
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"error": "Too many reset attempts. Try again later."},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    limiter.record_failure(key)  # the limiter counts attempts; a reset is one attempt
+    try:
+        await asyncio.to_thread(reset_to_generated_password, repo, _resolve_initial_password_path())
+    except OSError:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"error": "Could not write the new password file; the current password is unchanged."},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    return RedirectResponse("/login?reset=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/account/password", dependencies=[Depends(require_page_auth)])

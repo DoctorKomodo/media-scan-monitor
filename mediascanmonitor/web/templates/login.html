@@ -2,8 +2,10 @@
 {% block title %}Sign in — media-scan-monitor{% endblock %}
 {% block content %}
 <h1>Sign in</h1>
+{% if info %}<p class="ok" role="status">{{ info }}</p>{% endif %}
 <form method="post" action="/auth/login">
   <label>Password <input type="password" name="password" autofocus required /></label>
   <button type="submit">Sign in</button>
 </form>
+<p><a href="/auth/reset-password">Forgot password?</a></p>
 {% endblock %}
