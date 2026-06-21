@@ -43,6 +43,7 @@ from mediascanmonitor.web.deps import (
     get_templates,
     require_page_auth,
 )
+from mediascanmonitor.web.rebuild import rebuild_engine
 from mediascanmonitor.web.writes import (
     apply_folder_create,
     apply_folder_delete,
@@ -432,3 +433,34 @@ async def ui_delete_folder(
         detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         return _error_partial(request, templates, detail, "#folder-error")
     return await _folders_response(request, repo, server_id, templates)
+
+
+_INOTIFY_GATE_VALUES = frozenset({"enforce", "off"})
+
+
+@router.post("/ui/settings")
+async def ui_settings(
+    request: Request,
+    inotify_gate: str = Form(...),
+    repo: Repo = Depends(get_repo),
+    engine: Engine = Depends(get_engine),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    if inotify_gate not in _INOTIFY_GATE_VALUES:
+        raise HTTPException(status_code=422, detail="inotify_gate must be 'enforce' or 'off'")
+    await asyncio.to_thread(repo.set_setting, "inotify_gate", inotify_gate)
+    await rebuild_engine(engine)  # flipping to off can recover a blocked engine (§H/§I)
+    context = await _status_context(repo, engine)
+    return templates.TemplateResponse(request=request, name="_status.html", context=context)
+
+
+@router.post("/ui/recheck")
+async def ui_recheck(
+    request: Request,
+    repo: Repo = Depends(get_repo),
+    engine: Engine = Depends(get_engine),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    await rebuild_engine(engine)  # re-evaluate the gate after an out-of-band host limit change (§H)
+    context = await _status_context(repo, engine)
+    return templates.TemplateResponse(request=request, name="_status.html", context=context)
