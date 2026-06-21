@@ -57,7 +57,10 @@
 <section class="card">
   <h2>Folders</h2>
   <div id="folders">
-    {% include "_folders.html" %}
+    {# _folders.html loops over `folders`; on full page load it lives on the ServerRead.
+       Bind it explicitly — a bare include inherits an undefined `folders` and always
+       renders "No folders yet." (the htmx add-response sets `folders` itself). #}
+    {% with folders = server.folders %}{% include "_folders.html" %}{% endwith %}
   </div>
   <h3>Add a folder</h3>
   <div id="folder-error"></div>

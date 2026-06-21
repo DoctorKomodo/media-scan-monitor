@@ -49,10 +49,14 @@ def test_servers_page_lists_servers_and_add_form(auth_client: httpx.Client, repo
 
 def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     sid = _seed_server(repo)
+    folder_id = repo.list_folders(sid)[0].id
     resp = auth_client.get(f"/servers/{sid}")
     assert resp.status_code == 200
-    assert "/data/tv" in resp.text
     assert "Test" in resp.text  # Test button present
+    # The folder ROW must render on full page load, not just via the htmx add-response.
+    # (Asserting "/data/tv" alone is a false positive — it is also the add-form placeholder.)
+    assert "No folders yet." not in resp.text
+    assert f"/ui/folders/{folder_id}/update" in resp.text  # the row's edit form is present
 
 
 def test_server_detail_404_for_missing(auth_client: httpx.Client) -> None:
