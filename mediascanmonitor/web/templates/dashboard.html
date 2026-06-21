@@ -4,28 +4,55 @@
 {% include "_nav.html" %}
 <h1>Dashboard</h1>
 
-<section class="card">
-  <h2>Engine</h2>
-  <p>State: <span class="state state-{{ engine_state }}">{{ engine_state }}</span></p>
-  <p>Inotify gate: <strong>{{ inotify_gate }}</strong></p>
-  <p>Servers: {{ enabled_server_count }} enabled / {{ server_count }} total</p>
-</section>
+<div class="grid-2">
+  <section class="card">
+    <h2>Engine</h2>
+    <p class="readout"><span class="state state-{{ engine_state }}">{{ engine_state }}</span></p>
+    <p class="metric"><span class="metric-num">{{ enabled_server_count }}</span><span class="metric-den">of {{ server_count }} servers enabled</span></p>
+    <p class="kv">inotify gate <strong>{{ inotify_gate }}</strong></p>
+  </section>
 
-<section class="card">
-  <h2>inotify watch limit</h2>
-  {% if watch is none %}
-    <p>No watches configured yet — nothing to gate.</p>
-  {% else %}
-    <p>Current kernel limit: {{ watch.current }}</p>
-    <p>Directories watched: {{ watch.dirs }} &middot; Needed: {{ watch.needed }}</p>
-    {% if watch.ok %}
-      <p class="ok">Limit is sufficient.</p>
+  <section class="card">
+    <h2>inotify watch limit</h2>
+    {% if watch is none %}
+      <p class="muted">No watches configured yet — nothing to gate.</p>
     {% else %}
-      <p class="warn">Limit too low. Raise it on the host, then re-check on
-        <a href="/settings">Settings</a>:</p>
-      <pre>echo {{ watch.recommended }} &gt; /proc/sys/fs/inotify/max_user_watches</pre>
-      <pre>sysctl -w fs.inotify.max_user_watches={{ watch.recommended }}</pre>
+      {% set pct = ((100 * watch.needed / watch.current) if watch.current else 0) %}
+      <div class="gauge {{ 'gauge-ok' if watch.ok else 'gauge-warn' }}">
+        <div class="gauge-track"><div class="gauge-fill" style="width: {{ [pct, 100] | min | round(0, 'floor') | int }}%"></div></div>
+        <p class="gauge-label"><span>{{ watch.dirs }} watched</span><span>{{ watch.current }} limit</span></p>
+      </div>
+      {% if watch.ok %}
+        <p class="ok">Limit is sufficient — {{ watch.current }} ≥ {{ watch.needed }} needed.</p>
+      {% else %}
+        <p class="warn">Limit too low — {{ watch.needed }} needed. Raise it on the host to the
+          recommended {{ watch.recommended }}, then re-check on <a href="/settings">Settings</a>:</p>
+        <pre>echo {{ watch.recommended }} &gt; /proc/sys/fs/inotify/max_user_watches</pre>
+        <pre>sysctl -w fs.inotify.max_user_watches={{ watch.recommended }}</pre>
+      {% endif %}
     {% endif %}
-  {% endif %}
+  </section>
+</div>
+
+<section class="card wire-card">
+  <h2>Signal <span class="live">live</span></h2>
+  <ul id="event-feed" class="wire"></ul>
 </section>
+<script>
+  // Mirror of the Events page feed: stream dispatch results onto the dashboard wire so the
+  // landing screen shows the pipeline is alive. Newest at top; the wire keeps the last 50.
+  (function () {
+    const feed = document.getElementById("event-feed");
+    const source = new EventSource("/events/stream");
+    source.onmessage = function (e) {
+      const r = JSON.parse(e.data);
+      const li = document.createElement("li");
+      li.className = "event event-" + (r.ok ? "ok" : "fail");
+      li.textContent = r.ts + "  [" + r.server_name + "] " + r.event_type + " " + r.file_path +
+        "  -> " + (r.ok ? "ok" : "FAIL") + (r.detail ? " (" + r.detail + ")" : "");
+      feed.insertBefore(li, feed.firstChild);
+      while (feed.children.length > 50) { feed.removeChild(feed.lastChild); }
+    };
+  })();
+</script>
 {% endblock %}

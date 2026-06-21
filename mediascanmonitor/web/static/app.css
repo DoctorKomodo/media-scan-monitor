@@ -1,30 +1,466 @@
-:root { --fg: #1c2128; --muted: #57606a; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --line: #d0d7de; }
+/* ============================================================================
+   media-scan-monitor — "Signal Room"
+   A dark monitoring console. The type system is the identity: monospace is the
+   voice of the machine (labels, state readouts, the signal wire, data columns);
+   the system sans is reserved for human sentences. No web fonts are loaded —
+   the look rides on system stacks so the UI is identical offline on a NAS.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — deep blue-black ink, not pure black */
+  --ink:      #0d141c;
+  --panel:    #15212d;
+  --panel-2:  #1b2a38;
+  --inset:    #0f1924;
+  --line:     #283a4b;
+  --line-2:   #1e2c3a;
+
+  /* Ink-on-dark text ramp */
+  --text:     #dce6f0;
+  --muted:    #8095a9;
+  --faint:    #5c6e80;
+
+  /* Signal cyan = live / brand / primary action. Semantics stay honest. */
+  --signal:     #3fd8e4;
+  --signal-dim: #1f7e87;
+  --ok:   #41d693;
+  --warn: #f2b544;
+  --err:  #f26d74;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+  --r:    11px;
+  --r-sm: 7px;
+  --pad:  1.05rem 1.2rem;
+  --gut:  1.25rem;
+}
+
 * { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: #f6f8fa; }
-.nav { display: flex; gap: 1rem; align-items: center; padding: .75rem 1.25rem; background: #fff;
-       border-bottom: 1px solid var(--line); }
-.nav a { text-decoration: none; color: var(--fg); font-weight: 600; }
-.nav a:hover { color: #0969da; }
-.nav-logout { margin-left: auto; }
-h1, h2, section { margin: 1rem 1.25rem; }
-.card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; }
-label { display: block; margin: .4rem 0; }
-input, select, textarea { font: inherit; padding: .3rem .4rem; }
-button { font: inherit; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 6px;
-         background: #f3f4f6; cursor: pointer; }
-button:hover { background: #eaeef2; }
-button.danger { color: #fff; background: var(--err); border-color: var(--err); }
-.state { font-weight: 700; text-transform: uppercase; font-size: .8em; }
-.state-running { color: var(--ok); }
-.state-blocked { color: var(--warn); }
-.state-stopped, .state-starting { color: var(--muted); }
-.ok { color: var(--ok); } .warn { color: var(--warn); } .error { color: var(--err); font-weight: 600; }
-pre { background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px; padding: .5rem; overflow:auto; }
-.badge { font-size: .7em; background: #ddf4ff; color: #0969da; padding: .1rem .4rem; border-radius: 999px; }
-.server-table { border-collapse: collapse; width: calc(100% - 2.5rem); }
-.server-table th, .server-table td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); }
-.folder-list { list-style: none; padding: 0; }
-.folder-list li { padding: .5rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: .4rem; }
-#event-feed { list-style: none; padding: 0 1.25rem; font-family: ui-monospace, monospace; font-size: .85em; }
-.event { padding: .2rem 0; border-bottom: 1px solid var(--line); }
-.event-fail { color: var(--err); }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font: 15px/1.55 var(--sans);
+  color: var(--text);
+  background:
+    radial-gradient(1100px 420px at 78% -120px, rgba(63, 216, 228, 0.06), transparent 70%),
+    var(--ink);
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(63, 216, 228, 0.28); color: #fff; }
+
+a { color: var(--signal); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ----------------------------------------------------------------- App bar */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1.6rem;
+  padding: 0.7rem var(--gut);
+  background: rgba(13, 20, 28, 0.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font: 800 1.02rem/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-decoration: none;
+}
+.brand:hover { text-decoration: none; }
+.brand .sep { color: var(--signal); margin-left: 0.15em; }
+
+.nav-links { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.nav-links a {
+  font: 600 0.72rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.35rem 0;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.nav-links a:hover { color: var(--text); border-color: var(--signal); text-decoration: none; }
+
+.nav-logout { margin-left: auto; margin-top: 0; }
+.nav-logout button {
+  font: 600 0.72rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  padding: 0.4rem 0.7rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.nav-logout button:hover { color: var(--text); border-color: var(--muted); background: transparent; }
+
+/* ---------------------------------------------------------------- Headings */
+
+h1 {
+  margin: 1.4rem var(--gut) 0.6rem;
+  font: 650 1.6rem/1.1 var(--sans);
+  letter-spacing: -0.02em;
+}
+h1::before {
+  content: "// ";
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--signal);
+}
+
+h2 {
+  margin: 0 0 0.85rem;
+  font: 600 0.72rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+h3 { margin: 1.1rem 0 0.5rem; font: 600 0.95rem var(--sans); color: var(--text); }
+
+p { margin: 0.55rem 0; }
+.muted { color: var(--muted); }
+
+/* ------------------------------------------------------------ Layout / cards */
+
+section { margin: 1rem var(--gut); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: var(--pad);
+  margin: 1rem var(--gut);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 1rem;
+  margin: 1rem var(--gut);
+}
+.grid-2 > .card { margin: 0; }
+@media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ------------------------------------------------------------------- Forms */
+
+label { display: block; margin: 0.6rem 0; color: var(--muted); font-size: 0.92rem; }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0.46rem 0.55rem;
+  margin-top: 0.28rem;
+  max-width: 100%;
+}
+input[type="text"], input[type="password"], select, textarea { min-width: min(320px, 100%); }
+input[type="number"] { width: 8.5rem; }
+input[type="checkbox"] { min-width: 0; margin: 0 0.45rem 0 0; accent-color: var(--signal); vertical-align: -1px; }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--signal);
+  box-shadow: 0 0 0 3px rgba(63, 216, 228, 0.18);
+}
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  margin: 0.8rem 0;
+  padding: 0.4rem 0.9rem 0.8rem;
+}
+legend { font: 600 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 0 0.4rem; }
+
+/* ----------------------------------------------------------------- Buttons */
+
+button {
+  font: 600 0.86rem var(--sans);
+  padding: 0.5rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+button:hover { border-color: var(--muted); background: #223445; }
+
+button[type="submit"] {
+  border-color: var(--signal-dim);
+  color: var(--signal);
+  background: rgba(63, 216, 228, 0.07);
+}
+button[type="submit"]:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
+
+button.danger { color: #2a0a0c; background: var(--err); border-color: transparent; }
+button.danger:hover { background: #ff8086; color: #2a0a0c; border-color: transparent; }
+
+/* ------------------------------------------------------------ State readout */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font: 700 0.82rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+.state::before {
+  content: "";
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+.state-running  { color: var(--ok); }
+.state-blocked  { color: var(--warn); }
+.state-stopped, .state-starting { color: var(--faint); }
+
+.readout { margin: 0.2rem 0 0.9rem; }
+.readout .state { font-size: 1.45rem; gap: 0.7rem; }
+.readout .state::before { width: 12px; height: 12px; }
+
+.metric { margin: 0.5rem 0; }
+.metric-num { font: 700 1.5rem var(--mono); color: var(--text); }
+.metric-den { color: var(--muted); margin-left: 0.4rem; font-size: 0.9rem; }
+
+.kv { color: var(--muted); font-size: 0.9rem; }
+.kv strong {
+  color: var(--text);
+  font: 600 0.78rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 0.3rem;
+}
+
+.ok   { color: var(--ok);   font-weight: 600; }
+.warn { color: var(--warn); font-weight: 600; }
+.error {
+  background: rgba(242, 109, 116, 0.1);
+  border: 1px solid rgba(242, 109, 116, 0.38);
+  color: #ffd2d5;
+  border-radius: var(--r-sm);
+  padding: 0.6rem 0.8rem;
+  margin: 1rem var(--gut);
+  font-weight: 500;
+}
+/* Inside a card the banner shouldn't carry the outer page gutter. */
+.card .error, #edit-error .error, #form-error .error, #folder-error .error { margin: 0.6rem 0 0; }
+
+/* ----------------------------------------------------------- inotify gauge */
+
+.gauge { margin: 0.4rem 0 0.9rem; }
+.gauge-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.gauge-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.gauge-ok   .gauge-fill { background: linear-gradient(90deg, var(--signal-dim), var(--ok)); }
+.gauge-warn .gauge-fill { background: linear-gradient(90deg, var(--warn), var(--err)); }
+.gauge-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.4rem 0 0;
+  font: 0.74rem/1 var(--mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* --------------------------------------------------------------- Code/pre */
+
+pre {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0.7rem 0.8rem;
+  overflow: auto;
+  font: 0.82rem/1.5 var(--mono);
+  color: #bfe9ee;
+}
+code {
+  font: 0.85em var(--mono);
+  background: var(--inset);
+  border: 1px solid var(--line-2);
+  padding: 0.08rem 0.35rem;
+  border-radius: 5px;
+  color: #bfe9ee;
+}
+pre code { border: 0; background: none; padding: 0; }
+
+/* ----------------------------------------------------------------- Badges */
+
+.badge {
+  font: 600 0.68rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(63, 216, 228, 0.12);
+  color: var(--signal);
+  border: 1px solid var(--signal-dim);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  vertical-align: 0.12em;
+}
+
+/* ------------------------------------------------------------------ Tables */
+
+.server-table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+.server-table thead th {
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  font: 600 0.68rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.server-table td { padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+.server-table tbody tr:hover td { background: rgba(255, 255, 255, 0.018); }
+.server-table td form { display: inline; }
+.server-table .danger {
+  font: 600 0.7rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.3rem 0.6rem;
+}
+
+/* ------------------------------------------------------------ Folder list */
+
+.folder-list { list-style: none; padding: 0; margin: 0; }
+.folder-list li {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.folder-list li:last-child { border-bottom: 0; }
+.folder-list input[type="text"] { min-width: 0; width: auto; flex: 1 1 9rem; }
+.folder-list form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+
+/* --------------------------------------------------------- The signal wire */
+
+.wire-card { padding-bottom: 0.4rem; }
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: 600 0.64rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ok);
+}
+.live::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+#event-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 0.82rem/1.5 var(--mono);
+}
+#event-feed:empty::before {
+  content: "No events yet. Changes in watched folders stream here in real time.";
+  display: block;
+  padding: 1.1rem 0.2rem;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+}
+.event {
+  position: relative;
+  padding: 0.5rem 0.4rem 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--text);
+  word-break: break-word;
+  animation: flashin 0.55s ease-out;
+}
+.event:last-child { border-bottom: 0; }
+.event::before {
+  content: "";
+  position: absolute;
+  left: 0.45rem;
+  top: 0.82rem;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.event-fail { color: #f6b9bd; }
+.event-fail::before { background: var(--err); box-shadow: 0 0 8px var(--err); }
+
+@keyframes flashin {
+  from { background: rgba(63, 216, 228, 0.14); }
+  to   { background: transparent; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* ------------------------------------------------------------- Auth screens */
+
+body.auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  padding: 2rem 1.25rem;
+}
+body.auth .error { width: 100%; max-width: 380px; margin: 0; }
+.auth-card { width: 100%; max-width: 380px; margin: 0; }
+.auth-brand {
+  font: 800 1.5rem/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--text);
+}
+.auth-brand .sep { color: var(--signal); }
+.auth-card h1 { margin: 0 0 0.3rem; font-size: 1.3rem; }
+.auth-card form { margin-top: 0.4rem; }
+.auth-card button[type="submit"] { width: 100%; margin-top: 0.3rem; padding: 0.6rem; }
+.auth-card .danger { width: 100%; }
+.auth-links { text-align: center; font-size: 0.9rem; margin-top: 0.4rem; }
+
+/* ---------------------------------------------------------------- A11y/motion */
+
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

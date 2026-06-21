@@ -3,8 +3,11 @@
 {% block content %}
 {% include "_nav.html" %}
 <h1>Live events</h1>
-<p>Streaming from <code>/events/stream</code> (most recent at top).</p>
-<ul id="event-feed"></ul>
+<section class="card wire-card">
+  <h2>Signal <span class="live">live</span></h2>
+  <p class="muted">Streaming dispatch results from <code>/events/stream</code> — newest at top.</p>
+  <ul id="event-feed" class="wire"></ul>
+</section>
 <script>
   // 6-line EventSource feed (no htmx SSE extension vendored — keeps the static surface to one file).
   (function () {
