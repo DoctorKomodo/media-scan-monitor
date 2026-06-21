@@ -9,7 +9,8 @@ from mediascanmonitor.observ.logging import _redact_secrets, configure_logging
 
 
 @pytest.fixture(autouse=True)
-def _reset_structlog() -> None:
+def _reset_structlog():  # type: ignore[no-untyped-def]
+    yield
     structlog.reset_defaults()
 
 

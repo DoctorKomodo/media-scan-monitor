@@ -13,9 +13,12 @@ defense, so no CSRF token is used. The omission is intentional, not an oversight
 """
 
 import asyncio
+import contextlib
 import os
+import secrets
 from pathlib import Path
 
+import structlog
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import APIRouter, Depends, Form, Request, status
@@ -27,8 +30,10 @@ from mediascanmonitor.web.deps import get_repo, get_templates, require_page_auth
 from mediascanmonitor.web.ratelimit import LoginRateLimiter
 
 PASSWORD_HASH_KEY = "password_hash"
+MUST_CHANGE_KEY = "must_change_password"
 
 _hasher = PasswordHasher()  # library defaults
+log = structlog.get_logger("web.auth")
 
 
 def hash_password(password: str) -> str:
@@ -55,13 +60,56 @@ def check_password(repo: Repo, password: str) -> bool:
     return stored is not None and verify_password(stored, password)
 
 
-def bootstrap_password(repo: Repo) -> None:
-    """Seed a first-run password from the environment (idempotent).
+def generate_password() -> str:
+    """A strong, URL-safe random password (~24 chars) for first-run bootstrap."""
+    return secrets.token_urlsafe(18)
 
-    Precedence: ``MSM_PASSWORD_FILE`` (a path; file contents, whitespace-stripped) then
-    ``MSM_PASSWORD``. If a password is already set, return without touching it. If neither
-    env source yields a non-empty value, do nothing — the setup screen handles first run.
-    Never logs the value.
+
+def is_must_change(repo: Repo) -> bool:
+    """True while the auto-generated bootstrap password still needs rotating."""
+    return repo.get_setting(MUST_CHANGE_KEY) == "1"
+
+
+def _resolve_initial_password_path() -> Path:
+    """Where the auto-generated password file lives.
+
+    Precedence: ``MSM_INITIAL_PASSWORD_FILE`` > ``<dir of MSM_DB_PATH>/initial_password.txt``
+    > ``/config/initial_password.txt``.
+    """
+    explicit = os.environ.get("MSM_INITIAL_PASSWORD_FILE")
+    if explicit:
+        return Path(explicit)
+    db_path = os.environ.get("MSM_DB_PATH")
+    if db_path:
+        return Path(db_path).parent / "initial_password.txt"
+    return Path("/config/initial_password.txt")
+
+
+def _write_initial_password_file(path: Path, value: str) -> None:
+    """Write ``value`` to ``path`` owner-only (0600), creating the parent dir if needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value + "\n")
+    path.chmod(0o600)  # enforce 0600 even if the file pre-existed with looser perms
+
+
+def clear_initial_password(repo: Repo, path: Path) -> None:
+    """Clear the must-change flag and best-effort delete the generated-password file."""
+    repo.set_setting(MUST_CHANGE_KEY, "0")
+    # best-effort: missing file is not an error
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
+def bootstrap_password(repo: Repo, *, initial_password_path: Path | None = None) -> None:
+    """Seed a first-run password (idempotent; runs at every web startup).
+
+    Precedence: an existing password (no-op) > ``MSM_PASSWORD_FILE`` (path; contents
+    whitespace-stripped) > ``MSM_PASSWORD`` > auto-generate. Env-supplied passwords are
+    taken as final. When nothing is supplied, generate a strong random password, set the
+    ``must_change_password`` flag, and write the value to ``initial_password_path`` (default
+    ``_resolve_initial_password_path()``) at mode 0600. NEVER logs the value (rule 5).
     """
     if is_password_set(repo):
         return
@@ -76,6 +124,21 @@ def bootstrap_password(repo: Repo) -> None:
         value = (os.environ.get("MSM_PASSWORD") or "").strip()
     if value:
         set_password(repo, value)
+        return
+    # Nothing supplied → auto-generate and force a change on first login.
+    generated = generate_password()
+    target = (
+        initial_password_path
+        if initial_password_path is not None
+        else _resolve_initial_password_path()
+    )
+    # Write the retrievable file FIRST, before persisting the hash. If the write fails the
+    # instance stays cleanly at first-run (is_password_set is still False, so the next startup
+    # retries) rather than locking the operator out with a password set but no way to read it.
+    _write_initial_password_file(target, generated)
+    repo.set_setting(MUST_CHANGE_KEY, "1")
+    set_password(repo, generated)
+    log.info("auth.bootstrap.generated", path=str(target))
 
 
 def _read_secret_file(path: str) -> str:

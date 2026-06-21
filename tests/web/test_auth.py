@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import structlog
 
 # `repo` fixture comes from tests/web/conftest.py (Task 4). For this function-level test
 # file it is equally satisfied by the same fixture; conftest lands in Task 4, so run this
@@ -83,19 +84,79 @@ def test_bootstrap_file_takes_precedence_over_var(
     assert auth.check_password(repo, "from-env") is False
 
 
-def test_bootstrap_does_nothing_without_env(repo: Repo, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MSM_PASSWORD_FILE", raising=False)
-    monkeypatch.delenv("MSM_PASSWORD", raising=False)
-    auth.bootstrap_password(repo)
-    assert auth.is_password_set(repo) is False  # first-run setup screen will handle it
-
-
-def test_bootstrap_ignores_empty_values(
+def test_bootstrap_no_env_now_autogenerates(
     repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    blank = tmp_path / "blank.txt"
-    blank.write_text("   \n")  # whitespace-only file → empty after strip
-    monkeypatch.setenv("MSM_PASSWORD_FILE", str(blank))
-    monkeypatch.setenv("MSM_PASSWORD", "")  # empty var
-    auth.bootstrap_password(repo)
-    assert auth.is_password_set(repo) is False
+    for var in ("MSM_PASSWORD", "MSM_PASSWORD_FILE", "MSM_INITIAL_PASSWORD_FILE", "MSM_DB_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    auth.bootstrap_password(repo, initial_password_path=tmp_path / "initial_password.txt")
+    assert auth.is_password_set(repo)
+    assert auth.is_must_change(repo)
+
+
+def test_bootstrap_empty_env_values_autogenerate(
+    repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MSM_PASSWORD", "   ")  # whitespace-only → treated as unset
+    monkeypatch.delenv("MSM_PASSWORD_FILE", raising=False)
+    auth.bootstrap_password(repo, initial_password_path=tmp_path / "initial_password.txt")
+    assert auth.is_password_set(repo)
+    assert auth.is_must_change(repo)
+
+
+def test_generate_password_is_strong_and_unique() -> None:
+    a = auth.generate_password()
+    b = auth.generate_password()
+    assert a != b
+    assert len(a) >= 20
+    assert a.strip() == a  # url-safe, no surrounding whitespace
+
+
+def test_bootstrap_autogenerates_when_no_env(
+    repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for var in ("MSM_PASSWORD", "MSM_PASSWORD_FILE", "MSM_INITIAL_PASSWORD_FILE", "MSM_DB_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    pw_file = tmp_path / "initial_password.txt"
+
+    with structlog.testing.capture_logs() as logs:
+        auth.bootstrap_password(repo, initial_password_path=pw_file)
+
+    assert auth.is_password_set(repo)
+    assert auth.is_must_change(repo)
+    # the file holds the live password, restricted to the owner
+    assert pw_file.exists()
+    assert (pw_file.stat().st_mode & 0o777) == 0o600
+    generated = pw_file.read_text(encoding="utf-8").strip()
+    assert auth.check_password(repo, generated)
+    # rule 5: the path is logged, the value never is
+    events = [e for e in logs if e.get("event") == "auth.bootstrap.generated"]
+    assert events and events[0]["path"] == str(pw_file)
+    assert all(generated not in str(e) for e in logs)
+
+
+def test_bootstrap_env_var_skips_autogen(
+    repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MSM_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("MSM_PASSWORD", "chosen-pw")
+    pw_file = tmp_path / "initial_password.txt"
+    auth.bootstrap_password(repo, initial_password_path=pw_file)
+    assert auth.check_password(repo, "chosen-pw")
+    assert not auth.is_must_change(repo)
+    assert not pw_file.exists()  # env-supplied password writes no file
+
+
+def test_clear_initial_password_clears_flag_and_deletes_file(repo: Repo, tmp_path: Path) -> None:
+    repo.set_setting(auth.MUST_CHANGE_KEY, "1")
+    pw_file = tmp_path / "initial_password.txt"
+    pw_file.write_text("x\n", encoding="utf-8")
+    auth.clear_initial_password(repo, pw_file)
+    assert not auth.is_must_change(repo)
+    assert not pw_file.exists()
+
+
+def test_clear_initial_password_tolerates_missing_file(repo: Repo, tmp_path: Path) -> None:
+    repo.set_setting(auth.MUST_CHANGE_KEY, "1")
+    auth.clear_initial_password(repo, tmp_path / "nope.txt")  # must not raise
+    assert not auth.is_must_change(repo)
