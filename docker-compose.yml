@@ -4,13 +4,17 @@
 #
 # QUICK START
 # -----------
-# 1. Create the config directory and chown it to the container's non-root UID:
+# 1. Create the config directory and chown it to the UID the container runs as
+#    (1000 by default; if you set MSM_UID/MSM_GID below to read your media, use
+#    those same values here):
 #      mkdir -p ./config
-#      chown -R 1000:1000 ./config        # UID 1000 = container user "app"
+#      chown -R 1000:1000 ./config        # or: chown -R "$MSM_UID:$MSM_GID" ./config
 #    The app writes app.db and secret.key here at startup; if ./config is not
-#    writable by UID 1000 the container will fail with a permission error.
+#    writable by that UID the container will fail with a permission error.
 #
 # 2. Edit the media volume path(s) below — host paths MUST be local storage.
+#    If the dashboard later shows "Directories watched: 0", the container user
+#    can't read the media; set MSM_UID/MSM_GID (see the `user:` key below).
 #
 # 3. Start:
 #      docker compose up -d
@@ -49,6 +53,29 @@ services:
     # PID 1, which reaps zombie processes and correctly forwards SIGTERM.
     # Cheap robustness — always enable this.
     init: true
+
+    # Run the container as a specific host UID:GID. The image's built-in user is
+    # 1000:1000; override it to the OWNER OF YOUR MEDIA so the watcher can read
+    # the bind-mounted source directories. This is the usual Synology fix for a
+    # dashboard that shows "Directories watched: 0" — the media is owned by your
+    # DSM user, not UID 1000, so a 1000 container can't traverse it.
+    #
+    # Find the right values on the host:   stat -c '%u:%g' /volume2/data/media
+    # then set them (defaults keep the image's 1000:1000):
+    #   MSM_UID=1026 MSM_GID=100 docker compose up -d
+    # On Synology Container Manager (no shell to export vars), either put them in
+    # a `.env` file beside this compose file (MSM_UID=1026 / MSM_GID=100 on their
+    # own lines) or just hardcode the line, e.g.  user: "1026:100".
+    # IMPORTANT: ./config must also be writable by this UID — chown it to match
+    # (see QUICK START step 1), or startup fails writing app.db / secret.key.
+    user: "${MSM_UID:-1000}:${MSM_GID:-1000}"
+
+    # Alternative when the media is GROUP-readable but owned by another user:
+    # keep the UID at 1000 (so ./config ownership is unchanged) and add the
+    # media's group as a supplementary group instead. Find it with the `%g`
+    # above; the Synology "users" group is GID 100.
+    # group_add:
+    #   - "100"
 
     ports:
       - "8080:8080"

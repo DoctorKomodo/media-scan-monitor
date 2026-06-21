@@ -183,6 +183,32 @@ chown -R 1000:1000 ./config
 On **Synology** NAS this is particularly important: bind-mounts from DSM default to root
 ownership. Create the `config` directory as root, then chown it before starting the container.
 
+### Reading your media (host UID / `MSM_UID` / `MSM_GID`)
+
+The watcher can only watch directories the container user can **read and traverse**. Because the
+image runs as UID 1000 but your media is usually owned by a different host user, a default
+container often can't see it — the symptom is **Dashboard → "Directories watched: 0"** for an
+enabled folder on a correct path.
+
+Override the runtime user in `docker-compose.yml` (already wired via `user: "${MSM_UID:-1000}:${MSM_GID:-1000}"`)
+to the owner of your media. Find the owner on the host and start with those values:
+
+```bash
+stat -c '%u:%g' /volume2/data/media          # e.g. 1026:100
+MSM_UID=1026 MSM_GID=100 docker compose up -d
+```
+
+On **Synology Container Manager** (no shell to export variables), either add a `.env` file next
+to `docker-compose.yml` with `MSM_UID=1026` / `MSM_GID=100`, or hardcode the line directly:
+`user: "1026:100"`.
+
+**`./config` must also be writable by that UID** — chown it to the same values
+(`chown -R "$MSM_UID:$MSM_GID" ./config`), or startup fails creating `app.db` / `secret.key`.
+
+If instead the media is **group-readable** but owned by another user, keep UID 1000 (so `/config`
+ownership is unchanged) and add the media's group as a supplementary group via the commented
+`group_add:` block in the compose file (the Synology `users` group is GID 100).
+
 ### `secret.key` — back it up
 
 Server API tokens (Plex tokens, Emby API keys, etc.) are encrypted with Fernet using the key
@@ -277,6 +303,23 @@ The app is running and healthy but no scan events appear in the Events feed:
    matches the container's bind-mount path (e.g. `/data/media/tv`, not the host path
    `/volume1/media/tv`), and that the file extensions list includes the type of files being
    added.
+
+### Dashboard shows "Directories watched: 0"
+
+The folder is enabled but the count stays at 0. The watcher counts a directory only if the
+container user can read it, so this almost always means a **path or permission** problem:
+
+1. **The path doesn't exist in the container.** The folder path must resolve under a bind-mount.
+   Verify inside the container: `docker exec media-scan-monitor ls -ld /data/media/movies`. A
+   common mismatch is configuring `/data/media/movies` when the media actually sits directly in
+   `/data/media`, or a differently-cased subfolder name.
+2. **The container user can't read the media.** If the path exists but is owned by another host
+   user, set `MSM_UID`/`MSM_GID` (or `group_add`) to the media's owner — see
+   [Reading your media](#reading-your-media-host-uid--msm_uid--msm_gid). Confirm with
+   `docker exec media-scan-monitor id` and the `ls -ld` ownership above.
+3. **The server or the folder is disabled.** Only enabled servers and enabled folders are
+   watched. If the watch-limit panel instead says "No watches configured yet", nothing is
+   enabled — tick **Enabled** on the server and **on** for the folder.
 
 ### Container exits at startup
 
