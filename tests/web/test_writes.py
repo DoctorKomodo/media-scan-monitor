@@ -74,3 +74,23 @@ async def test_folder_create_calls_rebuild(repo: Repo, engine: Engine) -> None:
     folder = await apply_folder_create(repo, engine, server.id, FolderCreate(path="/data/tv"))
     assert folder.id is not None
     assert engine.rebuild_calls == before + 1  # type: ignore[attr-defined]
+
+
+async def test_create_rejects_empty_string_secret_for_auth_type(repo: Repo, engine: Engine) -> None:
+    # Empty string is "no secret" for the 422 gate, same as None (security regression guard).
+    with pytest.raises(HTTPException) as exc:
+        await apply_server_create(
+            repo, engine, ServerCreate(name="plex", type=ServerType.plex, secret="")
+        )
+    assert exc.value.status_code == 422
+
+
+async def test_update_clearing_secret_to_empty_string_rejected(repo: Repo, engine: Engine) -> None:
+    server = await apply_server_create(
+        repo, engine, ServerCreate(name="plex", type=ServerType.plex, secret="tok")
+    )
+    assert server.id is not None
+    # Clearing an auth-type server's secret (explicit "") must be rejected, not silently saved.
+    with pytest.raises(HTTPException) as exc:
+        await apply_server_update(repo, engine, server.id, ServerUpdate(secret=""))
+    assert exc.value.status_code == 422

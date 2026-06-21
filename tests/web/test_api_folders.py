@@ -86,3 +86,20 @@ def test_get_folder_wrong_server_is_404(auth_client: TestClient) -> None:
     server_b = _make_server(auth_client)
     folder = auth_client.post(f"/api/servers/{server_a}/folders", json={"path": "/data/tv"}).json()
     assert auth_client.get(f"/api/servers/{server_b}/folders/{folder['id']}").status_code == 404
+
+
+def test_patch_folder_wrong_server_is_404(auth_client: TestClient) -> None:
+    server_a = _make_server(auth_client)
+    server_b = _make_server(auth_client)
+    folder = auth_client.post(f"/api/servers/{server_a}/folders", json={"path": "/data/tv"}).json()
+    resp = auth_client.patch(
+        f"/api/servers/{server_b}/folders/{folder['id']}", json={"enabled": False}
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_folder_wrong_server_is_404(auth_client: TestClient) -> None:
+    server_a = _make_server(auth_client)
+    server_b = _make_server(auth_client)
+    folder = auth_client.post(f"/api/servers/{server_a}/folders", json={"path": "/data/tv"}).json()
+    assert auth_client.delete(f"/api/servers/{server_b}/folders/{folder['id']}").status_code == 404
