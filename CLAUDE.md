@@ -77,7 +77,7 @@ mediascanmonitor/
   watcher/                # async inotify backend (recursive via dynamic watches), watch-limit gate
   pipeline/               # events, router, filters, per-server debounce, dispatcher (fan-out)
   servers/                # ServerAdapter ABC + registry + per-type adapters (plex, emby, ...)
-  observ/                 # structlog logging, prometheus metrics, events bus (SSE ring buffer)
+  observ/                 # structlog logging, events bus (SSE ring buffer); prometheus metrics deferred (Phase 4b)
   engine.py               # owns watcher+pipeline; rebuild() on config change (no restart)
   web/                    # FastAPI app, REST API, SSE, Jinja2+htmx dashboard, password auth
 ```
@@ -117,8 +117,9 @@ mediascanmonitor/
 - **Phase 2 — All server types:** `servers/{emby,jellyfin,audiobookshelf,webhook}` + `test()`.
 - **Phase 3 — Web UI + API:** FastAPI app, password auth, full CRUD, Test buttons, dashboard,
   live SSE feed, health/ready, live `rebuild()` on every write.
-- **Phase 4 — Observability & polish:** Prometheus `/metrics`, dashboard widgets, README
-  rewrite, repo/image rename, image smoke test.
+- **Phase 4 — Deployment & release readiness:** README rewrite, Dockerfile + `uv.lock`, image
+  smoke test, repo/image rename. Observability (Prometheus `/metrics`, dashboard widgets) was
+  descoped to a **Phase 4b** — not built yet (see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
 
 ---
 
@@ -163,10 +164,9 @@ real gate. The recurring gotchas, fix them at the source:
 
 - **Image:** multi-stage `python:3.14-slim`, runs as non-root, `tzdata` for log timestamps.
   Install dependencies from the committed `uv.lock` (`uv sync --locked --no-editable`, no dev
-  extras) so the image, CI, and the dev box resolve identically. When the Dockerfile lands,
-  also update `docker-build.yml` path filters to `mediascanmonitor/**` + `uv.lock` (see
-  `docs/PLAN.md` → Deployment for the full checklist). CI already enforces the lock via
-  `uv sync --locked`.
+  extras) so the image, CI, and the dev box resolve identically. The `docker-build.yml` path
+  filters are scoped to `mediascanmonitor/**` + `uv.lock` + `Dockerfile` (see `docs/PLAN.md` →
+  Deployment for the full checklist). CI already enforces the lock via `uv sync --locked`.
 - **Volumes:** `./config:/config` holds `app.db` + the Fernet secret key. Media sources must be
   bind-mounted from **local** storage (inotify does not work over network mounts).
 - **Config:** everything in the UI behind a single app password. Only optional bootstrap env is

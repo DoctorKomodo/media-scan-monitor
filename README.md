@@ -103,7 +103,7 @@ docker compose up -d
 
 ### 4. Open the UI and log in
 
-Navigate to `http://<your-host>:8080` and log in.
+Navigate to `http://<your-host>:12000` and log in.
 
 #### First login (auto-generated password)
 
@@ -115,7 +115,7 @@ docker exec media-scan-monitor cat /config/initial_password.txt
 # or, via the bind mount:  cat ./config/initial_password.txt
 ```
 
-Log in with that password at `http://<host>:8080`. You will be **required to change it**
+Log in with that password at `http://<host>:12000`. You will be **required to change it**
 before you can use the app; once you do, the file is deleted automatically.
 
 ### 5. Add a server and a folder
@@ -142,7 +142,7 @@ stored in `app.db`.
 | Variable | Default | Description |
 |---|---|---|
 | `MSM_HOST` | `0.0.0.0` | Listen address for the web UI. |
-| `MSM_PORT` | `8080` | Listen port for the web UI. |
+| `MSM_PORT` | `8080` | Listen port for the web UI *inside the container*. The shipped compose publishes it on host port `12000` (`12000:8080`); change the host side there, not this. |
 | `MSM_DB_PATH` | `/config/app.db` | SQLite database path. |
 | `MSM_SECRET_KEY_FILE` | `/config/secret.key` | Path to the Fernet key file used to encrypt server secrets at rest (auto-created if absent). Used only when `MSM_SECRET_KEY` is unset. |
 | `MSM_SECRET_KEY` | — | Fernet key provided inline. **Takes precedence over the key file** (`MSM_SECRET_KEY` > file > auto-generate). If set, it must match the key that originally encrypted `app.db` or stored secrets won't decrypt. |
@@ -151,10 +151,14 @@ stored in `app.db`.
 | `MSM_INITIAL_PASSWORD_FILE` | `/config/initial_password.txt` | Where the auto-generated first-run password is written (mode 0600). Defaults to `initial_password.txt` in the directory of `MSM_DB_PATH` (i.e. `/config/initial_password.txt` with the default DB path). |
 | `TZ` | (system) | Container timezone, used for log timestamps. Set to your local zone (e.g. `Europe/London`, `America/New_York`). |
 
-### Liveness check
+### Liveness & readiness
 
-`GET http://<host>:8080/health` returns `{"status":"ok"}` when the app is running.
-This endpoint is unauthenticated and is used by Docker's built-in `HEALTHCHECK`.
+`GET http://<host>:12000/health` returns `{"status":"ok"}` when the app is running. This
+endpoint is **unauthenticated** and is what Docker's built-in `HEALTHCHECK` uses.
+
+`GET http://<host>:12000/ready` is an **authenticated** readiness probe for orchestration: it
+returns `200 {"status":"ready"}` only when the database is reachable **and** the engine is
+running, and `503` otherwise.
 
 ## Volumes
 

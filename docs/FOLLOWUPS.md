@@ -6,22 +6,10 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 ## Phase 3 — web UI
 
-- [x] ~~`Engine.rebuild()` full `blocked`↔`running` inotify-gate recovery~~ — DONE in phase3-03 §I
-      (`_gate_ok` + `start(park_when_blocked)` + gate-aware `rebuild()`; blocked = zero-root watcher,
-      recovers with no restart). Opus-reviewed; four transitions tested.
-- [x] ~~Require a token when saving an auth-required server~~ — DONE: the shared write-cores
-      (`web/writes.py`, sub-plan 02) raise `422` when a `requires_secret` type (`SERVER_TYPE_SPECS`)
-      would be saved with no/empty secret (tri-state aware); the `/ui` form (sub-plan 04) softens that
-      to an inline error WITHOUT writing or rebuilding. Webhook exempt. JSON API + htmx both enforced.
 ### Deferred UI polish (sub-plan 04)
 
-- [ ] Server **Test** button posts to the JSON `POST /api/servers/{id}/test` and shows raw JSON; a
-      prettier HTML twin (`/ui/servers/{id}/test`) is deferred. → phase3-04 dashboard plan
 - [ ] Dashboard/events **live-refresh** polish (poll `/api/status`, htmx SSE extension) — baseline
       ships server-rendered status + a plain `EventSource` feed. → phase3-04 dashboard plan
-- [ ] Webhook **edit** form omits `webhook_method`/`webhook_headers_json`/`webhook_body_template`
-      (they're set at create but immutable via the UI afterward); add them to the server detail/edit
-      form. The `/ui` update handler already accepts them. → phase3-04 Task 2; flagged in task review
 - [ ] `library_id` discovery dropdowns (needs a `ServerAdapter.list_libraries()` on the frozen ABC);
       the UI ships **free-text** `library_id` for now. → phase3 README decision 3
 - [ ] Folder picker assumes **one folder editor per page**: `_folder_picker.html` is included inside
@@ -32,9 +20,6 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 ### Cosmetic / low-priority (Phase 3 review carry-overs)
 
-- [ ] `ui_update_server` success renders the `_error.html` partial ("Saved." inside a
-      `role="alert"` element) — a screen reader announces a success as an alert. Give it a
-      `role="status"` `_ok.html` partial (or re-render the updated server partial). → phase3-04 Task 3
 - [ ] `Engine.rebuild()` logs `added=[]` on a `blocked→running` recovery even though the watcher's
       effective roots genuinely went 0→N (it diffs against config paths, which were already the
       desired set while blocked). Log fidelity only — no behavioral effect. Track last-applied roots
@@ -75,11 +60,6 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 ## Phase 4 — deployment & release readiness
 
-- [x] ~~Verify `mediascanmonitor/migrations/` (incl. `script.py.mako` + `versions/*.py`) ships
-      in the wheel/image~~ — DONE in phase4-01 (wheel-contents regression guard in
-      `tests/build/test_wheel_contents.py` asserts migrations + templates + static + `py.typed`
-      stay present; Hatchling ships them by default — no `force-include` added). Also covered by
-      the image smoke test (phase4-03) which asserts `app.db` is at Alembic head after first boot.
 - [ ] inotify resilience runbook: privileged `IN_Q_OVERFLOW` / `ENOSPC` reproduction (lower
       `fs.inotify.max_queued_events` / `max_user_watches` in a throwaway container) + a
       real-NAS bulk-import smoke. Can't run in CI; surfaced in README troubleshooting section
