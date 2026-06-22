@@ -80,7 +80,7 @@ def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, 
     # whole list saves to one sync endpoint (no per-row update/delete forms anymore).
     assert 'value="/data/tv"' in resp.text
     assert "data-folder-editor" in resp.text
-    assert f'/ui/servers/{sid}/folders' in resp.text
+    assert f"/ui/servers/{sid}/folders" in resp.text
 
 
 def test_server_detail_404_for_missing(auth_client: httpx.Client) -> None:
