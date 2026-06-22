@@ -135,6 +135,16 @@ def test_ui_fs_redirects_when_anon(client: httpx.Client) -> None:
     assert r.status_code == 303
 
 
+def test_ui_fs_root_crumb_is_a_navigable_link_not_an_inert_label(auth_client: httpx.Client) -> None:
+    # The root "/" crumb must read as a navigation target in every state. At root it is the leaf,
+    # but unlike a leaf folder it stays a clickable crumb (it used to render as the inert white
+    # "you are here" label only at root, which flipped its colour vs. subdirs).
+    resp = auth_client.get("/ui/fs", params={"path": "/"})
+    assert resp.status_code == 200
+    assert 'class="fs-crumb"' in resp.text  # the root crumb is the clickable button form
+    assert "fs-crumb-here" not in resp.text  # nothing is the inert current-location label at root
+
+
 def test_folder_picker_present_on_new_and_detail(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     sid = _seed_server(repo)
     for body in (auth_client.get("/servers/new").text, auth_client.get(f"/servers/{sid}").text):

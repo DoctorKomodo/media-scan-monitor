@@ -4,7 +4,9 @@
    folder names legally contain spaces / # / & / +. Nav controls are <button type=button> so they
    never submit the surrounding folder form. #}
 <nav class="fs-crumbs" aria-label="Folder path">
-  {% for c in crumbs %}{% if not loop.last %}<button type="button" class="fs-crumb" hx-get="/ui/fs?path={{ c.path | urlencode }}" hx-target="#fs-listing" hx-swap="innerHTML">{{ c.name }}</button><span class="fs-crumb-sep">/</span>{% else %}<span class="fs-crumb fs-crumb-here">{{ c.name }}</span>{% endif %}{% endfor %}
+  {# The leaf is an inert "you are here" label — EXCEPT the root, which is always a navigable
+     target, so its "/" reads as a link in every state (not a label at root, a link in subdirs). #}
+  {% for c in crumbs %}{% if loop.last and not loop.first %}<span class="fs-crumb fs-crumb-here">{{ c.name }}</span>{% else %}<button type="button" class="fs-crumb" hx-get="/ui/fs?path={{ c.path | urlencode }}" hx-target="#fs-listing" hx-swap="innerHTML">{{ c.name }}</button>{% if not loop.last %}<span class="fs-crumb-sep">/</span>{% endif %}{% endif %}{% endfor %}
 </nav>
 {% if error %}
 <p class="fs-error">{{ error }}</p>
