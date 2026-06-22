@@ -133,3 +133,12 @@ def test_ui_fs_normalizes_dotdot(auth_client: httpx.Client, tmp_path) -> None:  
 def test_ui_fs_redirects_when_anon(client: httpx.Client) -> None:
     r = client.get("/ui/fs", params={"path": "/"}, follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_folder_picker_present_on_new_and_detail(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    sid = _seed_server(repo)
+    for body in (auth_client.get("/servers/new").text, auth_client.get(f"/servers/{sid}").text):
+        assert "data-browse" in body  # the per-row Browse button
+        assert "data-folder-picker" in body  # the shared dialog shell
+        assert 'id="fs-listing"' in body  # the htmx swap target inside the dialog
+        assert "data-picker-select" in body  # the Select control

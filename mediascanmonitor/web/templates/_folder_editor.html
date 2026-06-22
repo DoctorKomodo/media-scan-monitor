@@ -9,7 +9,10 @@
   <div class="nf-rows" data-folder-rows>
     {% for f in folders %}
     <div class="nf-row" data-folder-row>
-      <input type="text" name="folder-{{ loop.index0 }}-path" value="{{ f.path }}" placeholder="/data/tv" aria-label="Path">
+      <div class="nf-path">
+        <input type="text" name="folder-{{ loop.index0 }}-path" value="{{ f.path }}" placeholder="/data/tv" aria-label="Path">
+        <button type="button" class="nf-browse" data-browse>Browse</button>
+      </div>
       <input type="text" name="folder-{{ loop.index0 }}-library_id" value="{{ f.library_id or '' }}" placeholder="—" aria-label="Library id">
       <input type="text" name="folder-{{ loop.index0 }}-extensions" value="{{ f.extensions | join(', ') }}" placeholder="mkv, mp4" aria-label="Extensions">
       <label class="folder-on"><input type="checkbox" name="folder-{{ loop.index0 }}-enabled" {% if f.enabled %}checked{% endif %}><span class="sr-only">Enabled</span></label>
@@ -17,7 +20,10 @@
     </div>
     {% else %}
     <div class="nf-row" data-folder-row>
-      <input type="text" name="folder-0-path" placeholder="/data/tv" aria-label="Path">
+      <div class="nf-path">
+        <input type="text" name="folder-0-path" placeholder="/data/tv" aria-label="Path">
+        <button type="button" class="nf-browse" data-browse>Browse</button>
+      </div>
       <input type="text" name="folder-0-library_id" placeholder="—" aria-label="Library id">
       <input type="text" name="folder-0-extensions" placeholder="mkv, mp4" aria-label="Extensions">
       <label class="folder-on"><input type="checkbox" name="folder-0-enabled" checked><span class="sr-only">Enabled</span></label>
@@ -28,11 +34,15 @@
   <button type="button" class="add-row-btn" data-add-folder-row>+ Add another folder</button>
   <template data-folder-row-tpl>
     <div class="nf-row" data-folder-row>
-      <input type="text" name="folder-__I__-path" placeholder="/data/tv" aria-label="Path">
+      <div class="nf-path">
+        <input type="text" name="folder-__I__-path" placeholder="/data/tv" aria-label="Path">
+        <button type="button" class="nf-browse" data-browse>Browse</button>
+      </div>
       <input type="text" name="folder-__I__-library_id" placeholder="—" aria-label="Library id">
       <input type="text" name="folder-__I__-extensions" placeholder="mkv, mp4" aria-label="Extensions">
       <label class="folder-on"><input type="checkbox" name="folder-__I__-enabled" checked><span class="sr-only">Enabled</span></label>
       <button type="button" class="ghost-danger nf-remove" data-folder-remove>Remove</button>
     </div>
   </template>
+  {% include "_folder_picker.html" %}
 </div>

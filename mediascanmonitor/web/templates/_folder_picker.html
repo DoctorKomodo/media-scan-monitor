@@ -1,0 +1,15 @@
+{# Folder picker dialog — one shared instance per page (one folder editor per page; see spec
+   2026-06-22). Opened per row by _folder_rows_script.html, which records the target path input,
+   loads #fs-listing via htmx, and on Select writes the listing's data-current-path back. Footer
+   controls are type=button so they never submit the surrounding folder form. #}
+<dialog class="fs-dialog" data-folder-picker aria-label="Browse folders">
+  <div class="fs-dialog-head">
+    <h2>Browse folders</h2>
+    <button type="button" class="fs-close" data-picker-close aria-label="Close">&times;</button>
+  </div>
+  <div id="fs-listing" class="fs-listing"></div>
+  <div class="fs-dialog-foot">
+    <button type="button" class="fs-cancel" data-picker-close>Cancel</button>
+    <button type="button" class="fs-select" data-picker-select>Select this folder</button>
+  </div>
+</dialog>
