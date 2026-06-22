@@ -28,3 +28,64 @@
     }
   })();
 </script>
+<script>
+  // Folder picker: open the shared <dialog> from a row's Browse button, browse via htmx, and
+  // write the chosen path back into that row's path input. Progressive enhancement — adds
+  // .picker-ready so the CSS-hidden Browse buttons appear (cloned rows inherit the class via the
+  // editor ancestor); with no JS the free-text input still works. Uses event delegation so rows
+  // added after load are handled too (mirrors the delegated remove handler above).
+  (function () {
+    const dialog = document.querySelector("[data-folder-picker]");
+    const listing = document.getElementById("fs-listing");
+    if (!dialog || !listing || typeof dialog.showModal !== "function") return;
+
+    const select = dialog.querySelector("[data-picker-select]");
+    let targetInput = null;
+
+    for (const editor of document.querySelectorAll("[data-folder-editor]")) {
+      editor.classList.add("picker-ready"); // reveals the Browse buttons (incl. cloned rows)
+      editor.addEventListener("click", (event) => {
+        const browse = event.target.closest("[data-browse]");
+        if (!browse) return;
+        targetInput = browse.closest("[data-folder-row]").querySelector('input[name$="-path"]');
+        const start = targetInput.value.trim() || "/";
+        select.disabled = true; // re-enabled on the first afterSwap below
+        dialog.showModal();
+        htmx.ajax("GET", "/ui/fs?path=" + encodeURIComponent(start), {
+          target: "#fs-listing",
+          swap: "innerHTML",
+        });
+      });
+    }
+
+    // Stale-path guard: disable Select while a navigation is in flight. After each swap,
+    // enable it only when the new listing has a real current path — so the error state (which
+    // renders data-current-path="") leaves Select disabled, per the spec.
+    listing.addEventListener("click", (event) => {
+      if (event.target.closest("[hx-get]")) select.disabled = true;
+    });
+    listing.addEventListener("htmx:afterSwap", () => {
+      const current = listing.querySelector("[data-current-path]");
+      select.disabled = !(current && current.dataset.currentPath);
+    });
+
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) {
+        dialog.close(); // backdrop click (the target is the dialog itself, not its content)
+        return;
+      }
+      if (event.target.closest("[data-picker-close]")) {
+        dialog.close();
+        return;
+      }
+      if (event.target.closest("[data-picker-select]")) {
+        const current = listing.querySelector("[data-current-path]");
+        const path = current && current.dataset.currentPath;
+        if (path && targetInput) {
+          targetInput.value = path;
+          dialog.close();
+        }
+      }
+    });
+  })();
+</script>
