@@ -32,3 +32,6 @@ htmlcov/
 # Local dev instance state (scripts/dev_serve.sh)
 dev-data/
 dev-data-serve.log
+
+# Playwright MCP scratch output (browser smoke runs)
+.playwright-mcp/
