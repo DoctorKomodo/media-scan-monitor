@@ -24,6 +24,11 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       form. The `/ui` update handler already accepts them. → phase3-04 Task 2; flagged in task review
 - [ ] `library_id` discovery dropdowns (needs a `ServerAdapter.list_libraries()` on the frozen ABC);
       the UI ships **free-text** `library_id` for now. → phase3 README decision 3
+- [ ] Folder picker assumes **one folder editor per page**: `_folder_picker.html` is included inside
+      `_folder_editor.html` (so the `<dialog>` / `id="fs-listing"` would duplicate if a second editor
+      ever rendered), while the picker JS binds all `[data-folder-editor]` to a single shared dialog.
+      Correct today; if a page ever shows two editors, hoist the dialog to one page-level include with a
+      unique listing target per editor. → docs/superpowers/specs/2026-06-22-folder-picker-design.md
 
 ### Cosmetic / low-priority (Phase 3 review carry-overs)
 
