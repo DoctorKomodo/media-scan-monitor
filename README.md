@@ -364,7 +364,7 @@ CI runs all four on every push/PR and must stay green.
 
 ## Legacy bash script
 
-The original Bash implementation (`plex_monitor.sh` and its `plex_monitor.conf` /
-`docker-compose.yml` / Alpine `Dockerfile`) is preserved **only as a behavioral reference** for
-the proven semantics being re-implemented. It is not maintained and should not be extended; the
-Python application replaces it. The previous Bash-focused README is available in the git history.
+This project began as a Bash script (`plex_monitor.sh` and its `plex_monitor.conf` / Alpine
+`Dockerfile`). The Python application has fully replaced it, and the Bash files were removed when
+the rewrite became the shipping version. If you need them, they (and the previous Bash-focused
+README) live in the git history before that cutover.

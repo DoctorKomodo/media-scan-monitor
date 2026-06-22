@@ -13,8 +13,8 @@ UI** (no hand-edited config files for normal use), with state in **SQLite**.
 
 > This is a ground-up rewrite *inspired by* the original `plex_monitor.sh` Bash script. There
 > is **no migration or backward-compatibility** requirement with the Bash version. The old
-> script and its docs remain in the repo only as a behavioral reference (see "Legacy
-> reference" below).
+> script was removed at the `app-v2`→`main` cutover; it survives only in git history (see
+> "Legacy reference" below).
 
 ---
 
@@ -177,14 +177,12 @@ real gate. The recurring gotchas, fix them at the source:
 
 ---
 
-## Legacy reference (do not extend)
+## Legacy reference (removed at cutover)
 
-The original Bash implementation is preserved purely as a behavioral reference for the proven
-semantics being re-implemented:
-
-- `plex_monitor.sh` — inotify events (`create`/`moved_to`/`delete`/`move`), ignore dirs
-  (`@eaDir`, `#snapshot`), scan-path computation (library root + first folder segment), the
-  debounce strategy, the Plex partial-scan call (`/library/sections/{id}/refresh?path=`), and
-  the inotify-limit wait.
-- `plex_monitor.conf`, `plex_token.txt.example`, the Alpine `Dockerfile`, and `docker-compose.yml`
-  are legacy artifacts; the Python app replaces them (Dockerfile/compose rewritten in later phases).
+The original Bash implementation (`plex_monitor.sh`, `plex_monitor.conf`, `plex_token.txt.example`,
+and the Alpine `Dockerfile`) was removed when `app-v2` merged to `main` as the viable replacement.
+It is **not** part of the codebase anymore — retrieve it from git history (before that merge) if you
+need to consult the proven semantics it encoded: inotify events (`create`/`moved_to`/`delete`/`move`),
+ignore dirs (`@eaDir`, `#snapshot`), scan-path computation (library root + first folder segment), the
+debounce strategy, the Plex partial-scan call (`/library/sections/{id}/refresh?path=`), and the
+inotify-limit wait. The current `Dockerfile` and `docker-compose.yml` are the Python app's, not legacy.

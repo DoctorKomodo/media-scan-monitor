@@ -1,7 +1,5 @@
 # Secrets — never commit tokens, keys, or app config
-plex_token.txt
 msm_password.txt
-plex_monitor.conf
 *.env
 .env
 /config/

@@ -36,11 +36,6 @@ tests/
 docs/
 .github/
 
-# Legacy Bash artefacts (replaced by the Python app in this rewrite)
-plex_monitor.sh
-plex_monitor.conf
-plex_token.txt.example
-
 # Compose / tooling / editor state
 docker-compose.yml
 alembic.ini
