@@ -7,69 +7,101 @@
 
 <section class="card">
   <h2>Connection test</h2>
-  <button hx-post="/api/servers/{{ server.id }}/test" hx-target="#test-result" hx-swap="innerHTML">
-    Test
-  </button>
-  <pre id="test-result"></pre>
+  <div class="test-row">
+    <button hx-post="/ui/servers/{{ server.id }}/test" hx-target="#test-result" hx-swap="innerHTML">
+      Test
+    </button>
+    <span class="test-hint muted">Sends a no-op request to confirm the URL and token work.</span>
+  </div>
+  <div id="test-result" class="test-result-slot"></div>
 </section>
 
 <section class="card">
   <h2>Edit</h2>
   <div id="edit-error"></div>
-  <form hx-post="/ui/servers/{{ server.id }}/update" hx-target="#edit-result" hx-swap="innerHTML">
-    <label>Name <input type="text" name="name" value="{{ server.name }}"></label>
-    <label>Base URL <input type="text" name="base_url" value="{{ server.base_url }}"></label>
-    <label>Token
-      <input type="password" name="secret" autocomplete="new-password"
-             placeholder="{% if server.has_secret %}(set — leave blank to keep){% else %}(none){% endif %}">
-    </label>
-    <label><input type="checkbox" name="clear_secret"> Clear stored token</label>
-    <label>Scan mode
-      <select name="scan_mode">
-        {% for m in server.supported_scan_modes %}
-          <option value="{{ m.value }}" {% if m == server.scan_mode %}selected{% endif %}>{{ m.value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Debounce mode
-      <select name="debounce_mode">
-        {% for m in debounce_modes %}
-          <option value="{{ m }}" {% if m == server.debounce_mode.value %}selected{% endif %}>{{ m }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Debounce window (s)
-      <input type="number" name="debounce_window_seconds" value="{{ server.debounce_window_seconds }}"></label>
-    <label>Retry attempts <input type="number" name="retry_attempts" value="{{ server.retry_attempts }}"></label>
-    <label>Timeout (s)
-      <input type="number" step="0.1" name="timeout_seconds" value="{{ server.timeout_seconds }}"></label>
-    <label><input type="checkbox" name="verify_tls" {% if server.verify_tls %}checked{% endif %}> Verify TLS</label>
-    <label><input type="checkbox" name="enabled" {% if server.enabled %}checked{% endif %}> Enabled</label>
-    <button type="submit">Save</button>
+  <form class="settings-form" hx-post="/ui/servers/{{ server.id }}/update"
+        hx-target="#edit-result" hx-swap="innerHTML">
+    {% include "_server_form_fields.html" %}
+    <div class="form-actions">
+      <button type="submit">Save changes</button>
+      <span id="edit-result" class="form-status"></span>
+    </div>
   </form>
-  <div id="edit-result"></div>
-  <form hx-post="/ui/servers/{{ server.id }}/delete" hx-target="body" hx-swap="innerHTML"
-        hx-confirm="Delete this server and all its folders?">
-    <button type="submit" class="danger">Delete server</button>
-  </form>
+
+  <div class="danger-zone">
+    <p>Delete this server and all of its folders. This can't be undone.</p>
+    <form hx-post="/ui/servers/{{ server.id }}/delete" hx-target="body" hx-swap="innerHTML"
+          hx-confirm="Delete this server and all its folders?">
+      <button type="submit" class="ghost-danger">Delete server</button>
+    </form>
+  </div>
 </section>
 
 <section class="card">
   <h2>Folders</h2>
-  <div id="folders">
-    {# _folders.html loops over `folders`; on full page load it lives on the ServerRead.
-       Bind it explicitly — a bare include inherits an undefined `folders` and always
-       renders "No folders yet." (the htmx add-response sets `folders` itself). #}
-    {% with folders = server.folders %}{% include "_folders.html" %}{% endwith %}
-  </div>
-  <h3>Add a folder</h3>
+  <p class="field-hint nf-intro">Edit the whole list and save — add or remove rows, then
+    <strong>Save folders</strong> applies exactly what's shown.</p>
   <div id="folder-error"></div>
-  <form hx-post="/ui/servers/{{ server.id }}/folders" hx-target="#folders" hx-swap="innerHTML">
-    <label>Path <input type="text" name="path" placeholder="/data/tv" required></label>
-    <label>Library id <input type="text" name="library_id"></label>
-    <label>Extensions <input type="text" name="extensions" placeholder="mkv, mp4"></label>
-    <label><input type="checkbox" name="enabled" checked> Enabled</label>
-    <button type="submit">Add folder</button>
+  <form hx-post="/ui/servers/{{ server.id }}/folders" hx-target="#folder-status" hx-swap="innerHTML">
+    {% with folders = server.folders %}{% include "_folder_editor.html" %}{% endwith %}
+    <div class="form-actions">
+      <button type="submit">Save folders</button>
+      <span id="folder-status" class="form-status"></span>
+    </div>
   </form>
 </section>
+
+<script>
+  // Token field control: turn the plain input + clear_secret checkbox into a
+  // keep / replace / clear affordance. No-JS users keep the input + checkbox.
+  (function () {
+    const field = document.querySelector(".token-field");
+    if (!field || field.dataset.hasSecret !== "true") return;
+
+    // Some nodes are absent when the token can't be cleared (required-secret types):
+    // only Replace/Cancel exist then, so every reference below is null-guarded.
+    const states = {
+      stored: field.querySelector(".token-stored"),
+      cleared: field.querySelector(".token-cleared"),
+      input: field.querySelector(".token-input"),
+    };
+    const secret = field.querySelector('input[name="secret"]');
+    const cancel = field.querySelector(".token-cancel");
+    const clearBox = field.querySelector('input[name="clear_secret"]');
+    const fallback = field.querySelector(".token-clear-fallback");
+
+    if (fallback) fallback.hidden = true; // the buttons drive clear_secret now
+
+    function show(state) {
+      for (const [name, el] of Object.entries(states)) {
+        if (el) el.hidden = name !== state;
+      }
+    }
+
+    field.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-token-action]")?.dataset.tokenAction;
+      if (!action) return;
+      if (action === "replace") {
+        if (clearBox) clearBox.checked = false;
+        secret.value = "";
+        show("input");
+        cancel.hidden = false;
+        secret.focus();
+      } else if (action === "clear") {
+        if (clearBox) clearBox.checked = true;
+        secret.value = "";
+        show("cleared");
+      } else {
+        // undo / cancel both return to the stored readout
+        if (clearBox) clearBox.checked = false;
+        secret.value = "";
+        cancel.hidden = true;
+        show("stored");
+      }
+    });
+
+    show("stored"); // enhanced initial state
+  })();
+</script>
+{% include "_folder_rows_script.html" %}
 {% endblock %}

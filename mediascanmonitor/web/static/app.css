@@ -329,42 +329,374 @@ pre code { border: 0; background: none; padding: 0; }
   vertical-align: 0.12em;
 }
 
-/* ------------------------------------------------------------------ Tables */
+/* -------------------------------------------------------- Channels (servers)
+   Each server is a channel on the signal bus. The left rail is the state axis:
+   lit cyan = live (receiving), dim = muted (disabled). The route line shows the
+   destination; the policy chips show how delivery is shaped. */
 
-.server-table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
-.server-table thead th {
-  text-align: left;
-  padding: 0.5rem 0.7rem;
-  font: 600 0.68rem var(--mono);
+.page-lede { margin: -0.2rem var(--gut) 0; max-width: 60ch; font-size: 0.95rem; }
+
+.channels { margin: 1rem var(--gut); display: flex; flex-direction: column; gap: 0.7rem; }
+
+.channel {
+  position: relative;
+  display: flex;
+  gap: 0.95rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 0.95rem 1.1rem 0.95rem 0;
+  overflow: hidden;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.channel:hover { border-color: var(--signal-dim); background: var(--panel-2); }
+
+/* The signal rail — the live/muted readout, drawn as a lit edge. */
+.channel-rail {
+  flex: 0 0 4px;
+  align-self: stretch;
+  background: var(--signal);
+  box-shadow: 0 0 12px -1px var(--signal);
+}
+.channel.is-off .channel-rail { background: var(--line); box-shadow: none; }
+.channel.is-off { background: var(--inset); }
+.channel.is-off .channel-name { color: var(--muted); }
+
+.channel-body { flex: 1 1 auto; min-width: 0; padding-left: 0.15rem; }
+
+.channel-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.channel-name {
+  font: 650 1.08rem/1.2 var(--sans);
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.channel-name:hover { color: var(--signal); text-decoration: none; }
+
+.channel-state {
+  font: 700 0.62rem/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.channel-state::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.channel-state.is-live { color: var(--ok); }
+.channel-state.is-live::before { box-shadow: 0 0 8px var(--ok); animation: pulse 1.8s ease-in-out infinite; }
+.channel-state.is-muted { color: var(--faint); }
+
+/* Delete is demoted: quiet by default, only reddens on intent. */
+.channel-del { margin-left: auto; }
+.ghost-danger {
+  font: 600 0.66rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.32rem 0.6rem;
+  color: var(--faint);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.ghost-danger:hover { color: #ffd2d5; background: rgba(242, 109, 116, 0.12); border-color: rgba(242, 109, 116, 0.5); }
+
+.channel-route {
+  margin: 0.5rem 0 0.6rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.route-arrow { color: var(--signal); font: 700 0.95rem var(--mono); flex: 0 0 auto; }
+.route-dest {
+  font: 0.86rem/1.3 var(--mono);
+  color: var(--text);
+  word-break: break-all;
+}
+.route-webhook { color: var(--muted); }
+
+.channel-policy { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font: 0.76rem/1 var(--mono);
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 0.28rem 0.6rem;
+}
+.chip-k { color: var(--faint); text-transform: uppercase; letter-spacing: 0.07em; font-size: 0.66rem; }
+.chip-warn { border-color: rgba(242, 181, 68, 0.4); }
+.chip-warn .chip-k, .chip-warn { color: var(--warn); }
+
+.channels-empty {
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  padding: 1.6rem 1.2rem;
+  text-align: center;
+}
+.channels-empty-line { font: 600 0.95rem var(--mono); color: var(--muted); margin: 0 0 0.3rem; }
+
+/* Add-server disclosure: keep the channel list the hero, reveal the form on demand. */
+.add-panel > .add-summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font: 600 0.72rem var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--muted);
+  color: var(--signal);
+}
+.add-panel > .add-summary::-webkit-details-marker { display: none; }
+.add-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem; height: 1.25rem;
+  border: 1px solid var(--signal-dim);
+  border-radius: var(--r-sm);
+  color: var(--signal);
+  font-weight: 700;
+  transition: transform 0.18s ease;
+}
+.add-panel[open] > .add-summary { margin-bottom: 0.6rem; color: var(--muted); }
+.add-panel[open] .add-mark { transform: rotate(45deg); }
+
+/* Folder rows render as .nf-row in the shared editor (see "Add-server (create)" below).
+   .folder-on is the per-row enabled toggle cell, shared by those rows. */
+.folder-on { display: inline-flex; align-items: center; justify-content: center; margin: 0; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Connection-test output: don't reserve an empty slab before a test has run. */
+.test-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+.test-hint { font-size: 0.88rem; }
+.test-result-slot:empty { display: none; }
+.test-result-slot { margin-top: 0.8rem; }
+.test-result {
+  display: inline-block;
+  font: 0.85rem/1.4 var(--mono);
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  word-break: break-word;
+}
+.test-ok { color: var(--ok); border-color: var(--signal-dim); background: rgba(65, 214, 147, 0.08); }
+.test-fail { color: #f6b9bd; border-color: rgba(242, 109, 116, 0.4); background: rgba(242, 109, 116, 0.08); }
+
+/* ----------------------------------------------------- Settings / edit form
+   Grouped sections of a console: each fieldset is a labelled band, fields flow
+   into as many columns as the width allows, inputs fill their cell so the form
+   reads as an aligned control panel rather than a ragged stack. */
+
+.settings-form { margin-top: 0.2rem; }
+
+.form-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem 1.4rem;
+}
+@media (max-width: 560px) { .form-head { grid-template-columns: 1fr; align-items: stretch; } }
+
+.form-section { border: 0; margin: 1.5rem 0 0; padding: 0; min-width: 0; }
+.form-section > legend {
+  float: none;
+  width: 100%;
+  margin: 0 0 0.85rem;
+  padding: 0 0 0.4rem;
   border-bottom: 1px solid var(--line);
+  color: var(--signal);
 }
-.server-table td { padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
-.server-table tbody tr:hover td { background: rgba(255, 255, 255, 0.018); }
-.server-table td form { display: inline; }
-.server-table .danger {
-  font: 600 0.7rem var(--mono);
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.9rem 1.2rem;
+}
+
+.field { display: flex; flex-direction: column; gap: 0.34rem; margin: 0; min-width: 0; }
+.field-label {
+  font: 600 0.66rem var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.3rem 0.6rem;
+  letter-spacing: 0.09em;
+  color: var(--faint);
 }
+.field-hint { font: 0.74rem/1.4 var(--sans); color: var(--faint); }
+.field-wide { grid-column: 1 / -1; }
+.field input, .field select, .field textarea { width: 100%; min-width: 0; margin-top: 0; }
+.field input[type="number"] { width: 100%; }
 
-/* ------------------------------------------------------------ Folder list */
-
-.folder-list { list-style: none; padding: 0; margin: 0; }
-.folder-list li {
-  padding: 0.7rem 0;
-  border-bottom: 1px solid var(--line-2);
+/* Token field: keep / replace / clear. The masked readout resembles a filled input
+   with its actions docked to the right. */
+.token-field { min-width: 0; }
+.token-field [hidden] { display: none !important; }
+.token-stored, .token-cleared {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.05rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.6rem;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.token-mask { font: 0.95rem/1 var(--mono); color: var(--muted); letter-spacing: 0.12em; }
+.token-mask-struck { text-decoration: line-through; color: var(--faint); }
+.token-status { font-size: 0.8rem; color: var(--muted); }
+.token-status-warn { color: var(--warn); }
+.token-actions { margin-left: auto; display: inline-flex; gap: 0.4rem; }
+.token-btn {
+  font: 600 0.64rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 0.28rem 0.55rem;
+  margin: 0;
+  color: var(--signal);
+  background: transparent;
+  border: 1px solid var(--signal-dim);
+  border-radius: var(--r-sm);
+}
+.token-btn:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
+.token-btn-muted { color: var(--muted); border-color: var(--line); }
+.token-btn-muted:hover { color: var(--text); background: var(--panel-2); border-color: var(--muted); }
+.token-btn-danger { color: var(--faint); border-color: var(--line); }
+.token-btn-danger:hover { color: #ffd2d5; background: rgba(242, 109, 116, 0.12); border-color: rgba(242, 109, 116, 0.5); }
+.token-input { display: flex; gap: 0.4rem; align-items: center; }
+.token-input input { flex: 1 1 auto; }
+.token-cancel { flex: 0 0 auto; }
+.token-clear-fallback { margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+
+.toggles { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 1rem; }
+.toggle {
+  display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9rem;
 }
-.folder-list li:last-child { border-bottom: 0; }
-.folder-list input[type="text"] { min-width: 0; width: auto; flex: 1 1 9rem; }
-.folder-list form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.toggle-lg {
+  padding: 0.46rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--inset);
+  font: 600 0.78rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.toggle-lg:has(input:checked) { color: var(--ok); border-color: var(--signal-dim); }
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line-2);
+}
+.form-status { font: 0.85rem var(--sans); color: var(--ok); }
+.form-status:empty { display: none; }
+
+/* Destructive, but quiet until intent — matches the channel list's Remove. */
+.danger-zone {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.4rem;
+  padding-top: 1.1rem;
+  border-top: 1px dashed var(--line);
+}
+.danger-zone p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+.danger-zone form { margin: 0 0 0 auto; }
+
+.field-static { margin: 0; padding: 0.46rem 0; font: 0.9rem var(--mono); color: var(--text); }
+
+/* ------------------------------------------------------ Add-server (create) */
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.page-head h1 { margin-bottom: 0; }
+.page-head .cta { margin-right: var(--gut); }
+
+.cta {
+  font: 600 0.74rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--signal-dim);
+  border-radius: var(--r-sm);
+  color: var(--signal);
+  background: rgba(63, 216, 228, 0.07);
+  white-space: nowrap;
+}
+.cta:hover { background: var(--signal); color: #04181b; border-color: var(--signal); text-decoration: none; }
+
+.form-cancel { color: var(--muted); font-size: 0.88rem; }
+.form-cancel:hover { color: var(--text); }
+
+/* New-server folder rows: aligned columns, one header, repeatable rows. */
+.nf-intro { margin: 0 0 0.9rem; }
+.nf-head, .nf-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto auto;
+  gap: 0.5rem 0.6rem;
+  align-items: center;
+}
+.nf-head {
+  padding: 0 0 0.45rem;
+  font: 600 0.64rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line);
+}
+.nf-row { padding: 0.55rem 0; border-bottom: 1px solid var(--line-2); }
+.nf-rows .nf-row:last-child { border-bottom: 0; }
+.nf-row input[type="text"] { width: 100%; min-width: 0; margin-top: 0; }
+.nf-row .folder-on { margin: 0; justify-content: center; }
+.nf-row .nf-remove { margin: 0; }
+
+.add-row-btn {
+  margin-top: 0.95rem;
+  font: 600 0.7rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--signal);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  padding: 0.5rem 0.85rem;
+}
+.add-row-btn:hover { border-color: var(--signal-dim); background: rgba(63, 216, 228, 0.05); }
+
+@media (max-width: 680px) {
+  .nf-head { display: none; }
+  .nf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding: 0.7rem 0; }
+  .nf-row input[type="text"] { width: auto; }
+  .nf-row input[name$="-path"] { flex: 1 1 100%; }
+  .nf-row input[name$="-library_id"] { flex: 1 1 5rem; }
+  .nf-row input[name$="-extensions"] { flex: 1 1 8rem; }
+  .nf-row .folder-on { margin-left: auto; }
+}
 
 /* --------------------------------------------------------- The signal wire */
 

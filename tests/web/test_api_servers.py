@@ -50,6 +50,15 @@ def test_create_webhook_without_secret_ok(auth_client: TestClient) -> None:
     assert resp.json()["has_secret"] is False
 
 
+def test_create_duplicate_name_is_409(auth_client: TestClient) -> None:
+    # The write core maps the create IntegrityError to a 409 so /api and /ui agree (no 500).
+    first = auth_client.post("/api/servers", json={"name": "dup", "type": "webhook"})
+    assert first.status_code == 201
+    resp = auth_client.post("/api/servers", json={"name": "dup", "type": "webhook"})
+    assert resp.status_code == 409
+    assert "already exists" in resp.json()["detail"].lower()
+
+
 def test_patch_disables_server(auth_client: TestClient) -> None:
     created = auth_client.post(
         "/api/servers", json={"name": "emby", "type": "emby", "secret": "t"}

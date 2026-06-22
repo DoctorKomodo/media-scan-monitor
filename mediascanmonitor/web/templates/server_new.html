@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Add a server — media-scan-monitor{% endblock %}
+{% block content %}
+{% include "_nav.html" %}
+<p><a href="/servers">&larr; Servers</a></p>
+<h1>Add a server</h1>
+<p class="page-lede muted">Define where scans are sent, then list the folders to watch — a server
+  only does something once it's watching at least one folder.</p>
+
+<section class="card">
+  <div id="form-error"></div>
+  <form id="add-server" class="settings-form" hx-post="/ui/servers/new"
+        hx-target="#form-error" hx-swap="innerHTML">
+    {% include "_server_form_fields.html" %}
+
+    <fieldset class="form-section">
+      <legend>Folders</legend>
+      <p class="field-hint nf-intro">Each folder declares a host path to watch and which file
+        types count. Leave a row blank to skip it.</p>
+      {% with folders = [] %}{% include "_folder_editor.html" %}{% endwith %}
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit">Create server</button>
+      <a class="form-cancel" href="/servers">Cancel</a>
+    </div>
+  </form>
+</section>
+
+<script type="application/json" id="type-specs">{{ type_specs | tojson }}</script>
+<script type="application/json" id="scan-modes-by-type">{{ scan_modes_by_type | tojson }}</script>
+<script>
+  // Per-type fields: show only the inputs a given backend uses (data-driven; no type names here).
+  (function () {
+    const specs = JSON.parse(document.getElementById("type-specs").textContent);
+    const modesByType = JSON.parse(document.getElementById("scan-modes-by-type").textContent);
+    const form = document.getElementById("add-server");
+    const typeSel = document.getElementById("type-select");
+    const modeSel = document.getElementById("scan-mode-select");
+    function apply() {
+      const spec = specs[typeSel.value] || {};
+      form.querySelector(".field-secret").style.display = spec.requires_secret ? "" : "none";
+      form.querySelector(".field-base_url").style.display = spec.requires_base_url ? "" : "none";
+      form.querySelector(".field-webhook").style.display = spec.is_webhook ? "" : "none";
+      const modes = modesByType[typeSel.value] || [];
+      modeSel.innerHTML = "";
+      for (const m of modes) {
+        const opt = document.createElement("option");
+        opt.value = m; opt.textContent = m; modeSel.appendChild(opt);
+      }
+    }
+    typeSel.addEventListener("change", apply);
+    apply();
+  })();
+</script>
+{% include "_folder_rows_script.html" %}
+{% endblock %}

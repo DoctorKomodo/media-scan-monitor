@@ -1,0 +1,7 @@
+{# Connection-test outcome — shared by the new-server "test before save" and the detail page's
+   stored-server test, so both render identically. Expects: result (ServerTestResponse). #}
+{% if result.ok %}
+<span class="test-result test-ok">✓ {{ result.detail }}</span>
+{% else %}
+<span class="test-result test-fail">✕ {{ result.detail }}</span>
+{% endif %}

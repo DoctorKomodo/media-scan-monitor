@@ -11,14 +11,12 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from mediascanmonitor.config.runtime import ServerRuntime
 from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.db.schemas import ServerCreate, ServerUpdate
 from mediascanmonitor.engine import Engine
-from mediascanmonitor.servers.http import build_client
-from mediascanmonitor.servers.registry import create_adapter
 from mediascanmonitor.web.api_schemas import ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import get_engine, get_repo, require_api_auth
+from mediascanmonitor.web.servertest import run_connectivity_test, runtime_from_server
 from mediascanmonitor.web.writes import (
     apply_server_create,
     apply_server_delete,
@@ -95,28 +93,5 @@ async def test_server(server_id: int, repo: Repo = Depends(get_repo)) -> ServerT
     server = await asyncio.to_thread(repo.get_server, server_id)
     if server is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "server not found")
-    assert server.id is not None
     secret = await asyncio.to_thread(repo.resolve_secret, server)
-    runtime = ServerRuntime(
-        server_id=server.id,
-        name=server.name,
-        type=server.type,
-        base_url=server.base_url,
-        verify_tls=server.verify_tls,
-        timeout_seconds=server.timeout_seconds,
-        secret=secret,
-        scan_mode=server.scan_mode,
-        debounce_mode=server.debounce_mode,
-        debounce_window_seconds=server.debounce_window_seconds,
-        retry_attempts=server.retry_attempts,
-        webhook_method=server.webhook_method,
-        webhook_headers_json=server.webhook_headers_json,
-        webhook_body_template=server.webhook_body_template,
-    )
-    client = build_client(verify_tls=server.verify_tls, timeout_seconds=server.timeout_seconds)
-    try:
-        adapter = create_adapter(runtime, client)
-        result = await adapter.test()
-    finally:
-        await client.aclose()
-    return ServerTestResponse(ok=result.ok, detail=result.detail)
+    return await run_connectivity_test(runtime_from_server(server, secret))

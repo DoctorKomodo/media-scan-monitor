@@ -67,6 +67,50 @@ class Repo:
                 statement = statement.where(col(Server.enabled).is_(True))
             return list(session.exec(statement).all())
 
+    def create_server_with_folders(
+        self, server_data: ServerCreate, folders: list[FolderCreate]
+    ) -> Server:
+        """Create a server and its folders in ONE transaction (all-or-nothing).
+
+        Mirrors create_server + create_folder, but a single session/commit means a
+        duplicate-name IntegrityError (or any failure) rolls back the whole thing —
+        the UI's combined add-server form never leaves a half-built server behind.
+        Schema validators already normalized each FolderCreate, so they're stored as-is.
+        """
+        with self._session_factory() as session:
+            server = Server(
+                name=server_data.name,
+                type=server_data.type,
+                base_url=server_data.base_url,
+                verify_tls=server_data.verify_tls,
+                timeout_seconds=server_data.timeout_seconds,
+                secret_encrypted=(
+                    self._box.encrypt(server_data.secret)
+                    if server_data.secret is not None
+                    else None
+                ),
+                scan_mode=server_data.scan_mode,
+                debounce_mode=server_data.debounce_mode,
+                debounce_window_seconds=server_data.debounce_window_seconds,
+                retry_attempts=server_data.retry_attempts,
+                enabled=server_data.enabled,
+                webhook_method=server_data.webhook_method,
+                webhook_headers_json=server_data.webhook_headers_json,
+                webhook_body_template=server_data.webhook_body_template,
+            )
+            for folder_data in folders:
+                folder = Folder(
+                    path=folder_data.path,
+                    library_id=folder_data.library_id,
+                    enabled=folder_data.enabled,
+                )
+                for ext in folder_data.extensions:
+                    folder.filetypes.append(FileType(extension=ext))
+                server.folders.append(folder)
+            session.add(server)
+            session.commit()
+            return server
+
     def update_server(self, server_id: int, data: ServerUpdate) -> Server:
         with self._session_factory() as session:
             server = session.get(Server, server_id)
@@ -106,6 +150,29 @@ class Repo:
             session.add(folder)
             session.commit()
             return folder
+
+    def replace_folders(self, server_id: int, folders: list[FolderCreate]) -> None:
+        """Replace ALL of a server's folders with ``folders``, in ONE transaction.
+
+        The detail page edits the whole folder list and saves it wholesale (the same model as
+        the new-server form): edited, added, and removed rows are reconciled by clearing the
+        current folders (delete-orphan also drops their filetypes) and recreating from the
+        submitted set. An empty list clears them. Raises KeyError if the server is gone.
+        Folders carry no state beyond what the form captures, so the rebuild loses nothing.
+        """
+        with self._session_factory() as session:
+            server = session.get(Server, server_id)
+            if server is None:
+                raise KeyError(f"server {server_id} not found")
+            # clear() is the safe delete-orphan idiom (see update_folder); the rows appended
+            # below are brand-new instances, never the cleared ones.
+            server.folders.clear()
+            for data in folders:
+                folder = Folder(path=data.path, library_id=data.library_id, enabled=data.enabled)
+                for ext in data.extensions:
+                    folder.filetypes.append(FileType(extension=ext))
+                server.folders.append(folder)
+            session.commit()
 
     def list_folders(self, server_id: int) -> list[Folder]:
         with self._session_factory() as session:

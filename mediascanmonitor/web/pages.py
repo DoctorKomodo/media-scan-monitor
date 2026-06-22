@@ -27,15 +27,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import FormData
 from starlette.responses import Response
 
 from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
 from mediascanmonitor.db.repo import Repo
-from mediascanmonitor.db.schemas import FolderCreate, FolderUpdate, ServerCreate, ServerUpdate
+from mediascanmonitor.db.schemas import FolderCreate, ServerCreate, ServerUpdate
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventRecord, EventsBus
 from mediascanmonitor.servers import registry
-from mediascanmonitor.web.api_schemas import SERVER_TYPE_SPECS, FolderRead, ServerRead
+from mediascanmonitor.web.api_schemas import SERVER_TYPE_SPECS, ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import (
     get_engine,
     get_events_bus,
@@ -44,11 +45,14 @@ from mediascanmonitor.web.deps import (
     require_page_auth,
 )
 from mediascanmonitor.web.rebuild import rebuild_engine
+from mediascanmonitor.web.servertest import (
+    run_connectivity_test,
+    runtime_from_create,
+    runtime_from_server,
+)
 from mediascanmonitor.web.writes import (
-    apply_folder_create,
-    apply_folder_delete,
-    apply_folder_update,
-    apply_server_create,
+    apply_folders_sync,
+    apply_server_create_with_folders,
     apply_server_delete,
     apply_server_update,
 )
@@ -141,8 +145,21 @@ async def servers_page(
     return templates.TemplateResponse(
         request=request,
         name="servers.html",
+        context={"servers": servers},
+    )
+
+
+@router.get("/servers/new")
+async def server_new_page(
+    request: Request, templates: Jinja2Templates = Depends(get_templates)
+) -> Response:
+    # Declared before /servers/{server_id} so the literal path wins over the int converter.
+    return templates.TemplateResponse(
+        request=request,
+        name="server_new.html",
         context={
-            "servers": servers,
+            "creating": True,
+            "server": None,
             "server_types": [t.value for t in ServerType],
             "scan_modes": [m.value for m in ScanMode],
             "debounce_modes": [m.value for m in DebounceMode],
@@ -172,9 +189,13 @@ async def server_detail(
         request=request,
         name="server_detail.html",
         context={
+            "creating": False,
             "server": server,
-            "scan_modes": [m.value for m in ScanMode],
             "debounce_modes": [m.value for m in DebounceMode],
+            "is_webhook": SERVER_TYPE_SPECS[server.type].is_webhook,
+            # A required token can be replaced but not cleared (clearing 422s in writes.py),
+            # so the template only offers "Clear" when the type allows an empty secret.
+            "secret_clearable": not SERVER_TYPE_SPECS[server.type].requires_secret,
         },
     )
 
@@ -210,6 +231,33 @@ def _split_extensions(raw: str) -> list[str]:
     return [part for part in re.split(r"[,\s]+", raw.strip()) if part]
 
 
+def _parse_folder_rows(form: FormData) -> list[FolderCreate]:
+    """Parse the combined add-server form's repeated ``folder-<i>-*`` fields into models.
+
+    Rows are addressed by index (not positional lists) so an unchecked ``enabled`` box can't
+    desync the columns. Rows with a blank path are skipped — the form ships one empty row, and
+    "add a server with no folders yet" stays valid. FolderCreate validates each kept row.
+    """
+    indices = sorted(
+        {int(m.group(1)) for key in form if (m := re.fullmatch(r"folder-(\d+)-path", key))}
+    )
+    folders: list[FolderCreate] = []
+    for i in indices:
+        path = str(form.get(f"folder-{i}-path") or "").strip()
+        if not path:
+            continue
+        library_id = str(form.get(f"folder-{i}-library_id") or "").strip()
+        folders.append(
+            FolderCreate(
+                path=path,
+                library_id=library_id or None,
+                extensions=_split_extensions(str(form.get(f"folder-{i}-extensions") or "")),
+                enabled=f"folder-{i}-enabled" in form,
+            )
+        )
+    return folders
+
+
 def _error_partial(
     request: Request, templates: Jinja2Templates, message: str, target: str
 ) -> Response:
@@ -234,18 +282,8 @@ async def _servers_list_response(
     )
 
 
-async def _folders_response(
-    request: Request, repo: Repo, server_id: int, templates: Jinja2Templates
-) -> Response:
-    raw = await asyncio.to_thread(repo.list_folders, server_id)
-    folders = [FolderRead.from_model(f) for f in raw]
-    return templates.TemplateResponse(
-        request=request, name="_folders.html", context={"folders": folders}
-    )
-
-
-@router.post("/ui/servers")
-async def ui_create_server(
+@router.post("/ui/servers/new")
+async def ui_create_server_with_folders(
     request: Request,
     name: str = Form(...),
     type: str = Form(...),
@@ -265,11 +303,12 @@ async def ui_create_server(
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    # Build the schema INSIDE the try: an invalid enum string (ServerType/ScanMode/DebounceMode)
-    # or a pydantic field-validator failure raises ValueError, which must render the inline error
-    # partial — not bubble to a 500. (Pydantic's ValidationError is a ValueError subclass.)
+    # Combined create: one form builds the server AND its folders, written in one transaction.
+    # On success we 204 + HX-Redirect to the new detail page; on any failure we render the
+    # inline error (retargeted to #form-error) instead of a 500 — same pattern as ui_create_server.
+    form = await request.form()
     try:
-        data = ServerCreate(
+        server_data = ServerCreate(
             name=name,
             type=ServerType(type),
             base_url=base_url,
@@ -285,12 +324,78 @@ async def ui_create_server(
             webhook_headers_json=webhook_headers_json or None,
             webhook_body_template=webhook_body_template or None,
         )
-        await apply_server_create(repo, engine, data)
+        folders = _parse_folder_rows(form)
+        server = await apply_server_create_with_folders(repo, engine, server_data, folders)
     except HTTPException as exc:
+        # incl. the 409 a duplicate name becomes in the write core, and the 422 token gate
         return _error_partial(request, templates, str(exc.detail), "#form-error")
     except ValueError as exc:
         return _error_partial(request, templates, str(exc), "#form-error")
-    return await _servers_list_response(request, repo, templates)
+    assert server.id is not None
+    response = Response(status_code=204)
+    response.headers["HX-Redirect"] = f"/servers/{server.id}"
+    return response
+
+
+def _test_result_response(
+    request: Request, templates: Jinja2Templates, result: ServerTestResponse
+) -> Response:
+    return templates.TemplateResponse(
+        request=request, name="_test_result.html", context={"result": result}
+    )
+
+
+@router.post("/ui/servers/test")
+async def ui_test_server_config(
+    request: Request,
+    type: str = Form(...),
+    name: str = Form("test"),
+    base_url: str = Form(""),
+    secret: str = Form(""),
+    verify_tls: bool = Form(False),
+    timeout_seconds: float = Form(10.0),
+    webhook_method: str = Form(""),
+    webhook_headers_json: str = Form(""),
+    webhook_body_template: str = Form(""),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    # "Test before save": probe the UNSAVED config the new-server form currently holds. Builds a
+    # throwaway runtime (no DB write) so the create and detail pages can both verify connectivity.
+    try:
+        data = ServerCreate(
+            name=name or "test",
+            type=ServerType(type),
+            base_url=base_url,
+            secret=secret or None,
+            verify_tls=verify_tls,
+            timeout_seconds=timeout_seconds,
+            webhook_method=webhook_method or None,
+            webhook_headers_json=webhook_headers_json or None,
+            webhook_body_template=webhook_body_template or None,
+        )
+    except ValueError as exc:
+        bad = ServerTestResponse(ok=False, detail=str(exc))
+        return _test_result_response(request, templates, bad)
+    result = await run_connectivity_test(runtime_from_create(data))
+    return _test_result_response(request, templates, result)
+
+
+@router.post("/ui/servers/{server_id}/test")
+async def ui_test_server(
+    request: Request,
+    server_id: int,
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    # Probe a STORED server (detail page) using its decrypted secret. Same renderer as the
+    # form-config test above, so both surfaces show identical results.
+    server = await asyncio.to_thread(repo.get_server, server_id)
+    if server is None:
+        result = ServerTestResponse(ok=False, detail=f"server {server_id} not found")
+        return _test_result_response(request, templates, result)
+    secret = await asyncio.to_thread(repo.resolve_secret, server)
+    result = await run_connectivity_test(runtime_from_server(server, secret))
+    return _test_result_response(request, templates, result)
 
 
 @router.post("/ui/servers/{server_id}/update")
@@ -308,6 +413,9 @@ async def ui_update_server(
     timeout_seconds: float = Form(10.0),
     verify_tls: bool = Form(False),
     enabled: bool = Form(False),
+    webhook_method: str = Form(""),
+    webhook_headers_json: str = Form(""),
+    webhook_body_template: str = Form(""),
     repo: Repo = Depends(get_repo),
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
@@ -317,6 +425,8 @@ async def ui_update_server(
     # error partial rather than 500 (mirrors the /api twin translating KeyError → 404).
     try:
         # Secret tri-state via exclude_unset: omit when blank (keep), set None when "clear" ticked.
+        # Webhook fields ride along too (the shared form renders them only for webhook servers),
+        # so editing a webhook's method/headers/body now persists like every other field.
         fields: dict[str, Any] = {
             "name": name,
             "base_url": base_url,
@@ -327,6 +437,9 @@ async def ui_update_server(
             "timeout_seconds": timeout_seconds,
             "verify_tls": verify_tls,
             "enabled": enabled,
+            "webhook_method": webhook_method or None,
+            "webhook_headers_json": webhook_headers_json or None,
+            "webhook_body_template": webhook_body_template or None,
         }
         if clear_secret:
             fields["secret"] = None
@@ -339,7 +452,7 @@ async def ui_update_server(
     except (ValueError, KeyError) as exc:
         return _error_partial(request, templates, str(exc), "#edit-error")
     return templates.TemplateResponse(
-        request=request, name="_error.html", context={"message": "Saved."}
+        request=request, name="_saved.html", context={"message": "Saved."}
     )
 
 
@@ -360,79 +473,26 @@ async def ui_delete_server(
 
 
 @router.post("/ui/servers/{server_id}/folders")
-async def ui_create_folder(
+async def ui_sync_folders(
     request: Request,
     server_id: int,
-    path: str = Form(...),
-    library_id: str = Form(""),
-    extensions: str = Form(""),
-    enabled: bool = Form(False),
     repo: Repo = Depends(get_repo),
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
+    # The detail page edits the whole folder list in one editor and saves it wholesale (same
+    # model as the new-server form): parse every folder-<i>-* row and replace the server's set.
+    # KeyError = server deleted concurrently → inline error, not a 500 (mirrors the /api twin).
+    form = await request.form()
     try:
-        data = FolderCreate(
-            path=path,
-            library_id=library_id or None,
-            extensions=_split_extensions(extensions),
-            enabled=enabled,
-        )
-        await apply_folder_create(repo, engine, server_id, data)
-    except (HTTPException, ValueError) as exc:
-        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
-        return _error_partial(request, templates, detail, "#folder-error")
-    return await _folders_response(request, repo, server_id, templates)
-
-
-@router.post("/ui/folders/{folder_id}/update")
-async def ui_update_folder(
-    request: Request,
-    folder_id: int,
-    path: str = Form(...),
-    library_id: str = Form(""),
-    extensions: str = Form(""),
-    enabled: bool = Form(False),
-    repo: Repo = Depends(get_repo),
-    engine: Engine = Depends(get_engine),
-    templates: Jinja2Templates = Depends(get_templates),
-) -> Response:
-    folder = await asyncio.to_thread(repo.get_folder, folder_id)
-    if folder is None:
-        return _error_partial(request, templates, f"folder {folder_id} not found", "#folder-error")
-    server_id = folder.server_id
-    try:
-        data = FolderUpdate(
-            path=path,
-            library_id=library_id or None,
-            extensions=_split_extensions(extensions),
-            enabled=enabled,
-        )
-        await apply_folder_update(repo, engine, folder_id, data)
+        folders = _parse_folder_rows(form)
+        await apply_folders_sync(repo, engine, server_id, folders)
     except (HTTPException, ValueError, KeyError) as exc:
         detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         return _error_partial(request, templates, detail, "#folder-error")
-    return await _folders_response(request, repo, server_id, templates)
-
-
-@router.post("/ui/folders/{folder_id}/delete")
-async def ui_delete_folder(
-    request: Request,
-    folder_id: int,
-    repo: Repo = Depends(get_repo),
-    engine: Engine = Depends(get_engine),
-    templates: Jinja2Templates = Depends(get_templates),
-) -> Response:
-    folder = await asyncio.to_thread(repo.get_folder, folder_id)
-    if folder is None:
-        return _error_partial(request, templates, f"folder {folder_id} not found", "#folder-error")
-    server_id = folder.server_id
-    try:
-        await apply_folder_delete(repo, engine, folder_id)
-    except (HTTPException, ValueError, KeyError) as exc:
-        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
-        return _error_partial(request, templates, detail, "#folder-error")
-    return await _folders_response(request, repo, server_id, templates)
+    return templates.TemplateResponse(
+        request=request, name="_saved.html", context={"message": "Folders saved."}
+    )
 
 
 _INOTIFY_GATE_VALUES = frozenset({"enforce", "off"})

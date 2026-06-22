@@ -1,0 +1,146 @@
+{# Shared server settings form body — used by BOTH the new-server page (creating=True) and the
+   detail edit form (creating=False), so the two never drift. The wrapping <form> and the
+   actions/folders live in each page; this renders only the Identity + Connection + Delivery +
+   Reliability fields.
+
+   Context:
+     creating         bool — create vs edit mode
+     server           ServerRead | None (None when creating)
+     server_types     list[str]   (create only — the Type select)
+     scan_modes       list[str]   (create only — narrowed by per-type JS)
+     debounce_modes   list[str]
+     is_webhook       bool        (edit only — whether to show the webhook fieldset)
+     secret_clearable bool        (edit only — passed through to _token_field.html)
+   Differences by mode: Type is a select (create) vs a fixed readout (edit); Token is a plain
+   input (create) vs the Replace/Clear control (edit); create gets a "Test connection" button. #}
+
+<div class="form-head">
+  <label class="field">
+    <span class="field-label">Name</span>
+    <input type="text" name="name" value="{{ '' if creating else server.name }}"
+           {% if creating %}placeholder="Plex — Living Room" required{% endif %}>
+  </label>
+  <label class="toggle toggle-lg">
+    <input type="checkbox" name="enabled" {% if creating or server.enabled %}checked{% endif %}>
+    <span>Enabled</span>
+  </label>
+</div>
+
+<fieldset class="form-section">
+  <legend>Connection</legend>
+  <div class="form-grid">
+    {% if creating %}
+    <label class="field">
+      <span class="field-label">Type</span>
+      <select name="type" id="type-select">
+        {% for t in server_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+    {% else %}
+    <div class="field">
+      <span class="field-label">Type</span>
+      <p class="field-static">{{ server.type }}</p>
+    </div>
+    {% endif %}
+    <label class="field field-base_url">
+      <span class="field-label">Base URL</span>
+      <input type="text" name="base_url" value="{{ '' if creating else server.base_url }}"
+             placeholder="http://host:port">
+    </label>
+    <div class="field field-secret{% if not creating %} token-field{% endif %}"
+         {% if not creating %}data-has-secret="{{ 'true' if server.has_secret else 'false' }}"{% endif %}>
+      <span class="field-label">Token</span>
+      {% if creating %}
+      <input type="password" name="secret" autocomplete="new-password" placeholder="token">
+      {% else %}
+      {% include "_token_field.html" %}
+      {% endif %}
+    </div>
+  </div>
+  <div class="toggles">
+    <label class="toggle"><input type="checkbox" name="verify_tls"
+      {% if creating or server.verify_tls %}checked{% endif %}> Verify TLS</label>
+  </div>
+  {% if creating %}
+  <div class="test-row">
+    <button type="button" hx-post="/ui/servers/test" hx-target="#test-result" hx-swap="innerHTML">
+      Test connection
+    </button>
+    <span class="test-hint muted">Checks the URL and token without saving.</span>
+  </div>
+  <div id="test-result" class="test-result-slot"></div>
+  {% endif %}
+  {% if creating or is_webhook %}
+  <fieldset class="form-section field-webhook">
+    <legend>Webhook</legend>
+    <div class="form-grid">
+      <label class="field">
+        <span class="field-label">Method</span>
+        <input type="text" name="webhook_method"
+               value="{{ '' if creating else (server.webhook_method or '') }}" placeholder="POST">
+      </label>
+      <label class="field">
+        <span class="field-label">Headers (JSON)</span>
+        <input type="text" name="webhook_headers_json"
+               value="{{ '' if creating else (server.webhook_headers_json or '') }}"
+               placeholder='{"X-Token": "…"}'>
+      </label>
+    </div>
+    <label class="field">
+      <span class="field-label">Body template</span>
+      <textarea name="webhook_body_template" rows="3"
+                placeholder='{"path": "{{ "{{path}}" }}"}'>{{ '' if creating else (server.webhook_body_template or '') }}</textarea>
+    </label>
+  </fieldset>
+  {% endif %}
+</fieldset>
+
+<fieldset class="form-section">
+  <legend>Delivery</legend>
+  <div class="form-grid">
+    <label class="field">
+      <span class="field-label">Scan mode</span>
+      <select name="scan_mode" {% if creating %}id="scan-mode-select"{% endif %}>
+        {% if creating %}
+          {% for m in scan_modes %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+        {% else %}
+          {% for m in server.supported_scan_modes %}
+            <option value="{{ m.value }}" {% if m == server.scan_mode %}selected{% endif %}>{{ m.value }}</option>
+          {% endfor %}
+        {% endif %}
+      </select>
+    </label>
+    <label class="field">
+      <span class="field-label">Debounce mode</span>
+      <select name="debounce_mode">
+        {% for m in debounce_modes %}
+          <option value="{{ m }}"
+            {% if not creating and m == server.debounce_mode.value %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span class="field-label">Debounce window</span>
+      <input type="number" name="debounce_window_seconds"
+             value="{{ 30 if creating else server.debounce_window_seconds }}">
+      <span class="field-hint">seconds — collapse a burst into one trigger</span>
+    </label>
+  </div>
+</fieldset>
+
+<fieldset class="form-section">
+  <legend>Reliability</legend>
+  <div class="form-grid">
+    <label class="field">
+      <span class="field-label">Retry attempts</span>
+      <input type="number" name="retry_attempts" value="{{ 3 if creating else server.retry_attempts }}">
+      <span class="field-hint">total tries — 1 means no retry</span>
+    </label>
+    <label class="field">
+      <span class="field-label">Timeout</span>
+      <input type="number" step="0.1" name="timeout_seconds"
+             value="{{ 10 if creating else server.timeout_seconds }}">
+      <span class="field-hint">seconds per request</span>
+    </label>
+  </div>
+</fieldset>

@@ -1,0 +1,30 @@
+<script>
+  // Drives every folder editor on the page (new-server form + detail "Folders"): add a row from
+  // the template, remove a row (keeping at least one, cleared). Indices only grow, so a removed
+  // row's name can't collide with a later one.
+  (function () {
+    for (const editor of document.querySelectorAll("[data-folder-editor]")) {
+      const rows = editor.querySelector("[data-folder-rows]");
+      const tpl = editor.querySelector("[data-folder-row-tpl]").innerHTML;
+      let next = rows.querySelectorAll("[data-folder-row]").length;
+
+      editor.querySelector("[data-add-folder-row]").addEventListener("click", () => {
+        rows.insertAdjacentHTML("beforeend", tpl.replaceAll("__I__", String(next++)));
+        rows.lastElementChild.querySelector('input[name$="-path"]').focus();
+      });
+
+      rows.addEventListener("click", (event) => {
+        if (!event.target.closest("[data-folder-remove]")) return;
+        const all = rows.querySelectorAll("[data-folder-row]");
+        if (all.length > 1) {
+          event.target.closest("[data-folder-row]").remove();
+        } else {
+          all[0].querySelectorAll("input").forEach((i) => {
+            if (i.type === "checkbox") i.checked = true;
+            else i.value = "";
+          });
+        }
+      });
+    }
+  })();
+</script>

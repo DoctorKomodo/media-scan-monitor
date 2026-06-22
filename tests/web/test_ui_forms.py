@@ -1,6 +1,7 @@
 """/ui form handlers: success swaps a partial, 422 renders inline, the write-core rebuilds."""
 
 import httpx
+import respx
 
 from mediascanmonitor.db.models import ServerType
 from mediascanmonitor.db.schemas import FolderCreate, ServerCreate
@@ -13,41 +14,60 @@ def _seed_plex(repo) -> int:  # type: ignore[no-untyped-def]
     return int(s.id)
 
 
-def test_ui_create_webhook_server_swaps_list_and_rebuilds(
+def test_ui_create_server_with_folders_redirects_and_persists(
     auth_client: httpx.Client,
     repo,
     engine,  # type: ignore[no-untyped-def]
 ) -> None:
     before = engine.rebuild_calls
     resp = auth_client.post(
-        "/ui/servers",
+        "/ui/servers/new",
         data={
-            "name": "Hook",
-            "type": "webhook",
-            "base_url": "https://hook.example",
-            "scan_mode": "library",
-            "debounce_mode": "off",
+            "name": "Plex Combined",
+            "type": "plex",
+            "base_url": "http://plex:32400",
+            "secret": "tok",
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
             "debounce_window_seconds": "30",
-            "retry_attempts": "1",
+            "retry_attempts": "3",
             "timeout_seconds": "10",
+            "verify_tls": "on",
+            "enabled": "on",
+            "folder-0-path": "/data/tv",
+            "folder-0-library_id": "2",
+            "folder-0-extensions": "mkv, mp4",
+            "folder-0-enabled": "on",
+            # a blank row is skipped, not an error
+            "folder-1-path": "",
+            "folder-2-path": "/data/movies",
+            "folder-2-extensions": "mkv",
         },
     )
-    assert resp.status_code == 200
-    assert "Hook" in resp.text  # the new server row is in the swapped list
-    assert engine.rebuild_calls == before + 1
-    assert any(s.name == "Hook" for s in repo.list_servers())
+    assert resp.status_code == 204
+    created = next(s for s in repo.list_servers() if s.name == "Plex Combined")
+    assert resp.headers["hx-redirect"] == f"/servers/{created.id}"
+    assert engine.rebuild_calls == before + 1  # one rebuild for the whole create
+    folders = repo.list_folders(created.id)
+    assert {f.path for f in folders} == {"/data/tv", "/data/movies"}  # blank row skipped
+    by_path = {f.path: f for f in folders}
+    assert sorted(ft.extension for ft in by_path["/data/tv"].filetypes) == ["mkv", "mp4"]
+    # Index-addressed rows: folder-0 sent enabled=on, folder-2 omitted the checkbox entirely.
+    # The omitted box must land enabled=False (the desync the index scheme guards against).
+    assert by_path["/data/tv"].enabled is True
+    assert by_path["/data/movies"].enabled is False
 
 
-def test_ui_create_plex_without_token_renders_inline_error_no_rebuild(
+def test_ui_create_server_with_folders_rejects_missing_token_atomically(
     auth_client: httpx.Client,
     repo,
     engine,  # type: ignore[no-untyped-def]
 ) -> None:
     before = engine.rebuild_calls
     resp = auth_client.post(
-        "/ui/servers",
+        "/ui/servers/new",
         data={
-            "name": "BadPlex",
+            "name": "NoTokenPlex",
             "type": "plex",
             "base_url": "http://plex:32400",
             "scan_mode": "targeted",
@@ -55,13 +75,43 @@ def test_ui_create_plex_without_token_renders_inline_error_no_rebuild(
             "debounce_window_seconds": "30",
             "retry_attempts": "3",
             "timeout_seconds": "10",
+            "folder-0-path": "/data/tv",
+        },
+    )
+    assert resp.status_code == 200  # softened so htmx swaps the inline error
+    assert "token" in resp.text.lower()
+    assert resp.headers.get("hx-retarget") == "#form-error"
+    assert engine.rebuild_calls == before  # nothing written
+    assert not any(s.name == "NoTokenPlex" for s in repo.list_servers())  # no orphan server/folders
+
+
+def test_ui_create_server_with_folders_duplicate_name_renders_inline_error(
+    auth_client: httpx.Client,
+    repo,
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    _seed_plex(repo)  # an existing server named "Plex"
+    before = engine.rebuild_calls
+    resp = auth_client.post(
+        "/ui/servers/new",
+        data={
+            "name": "Plex",  # collides
+            "type": "plex",
+            "base_url": "http://plex:32400",
+            "secret": "tok",
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+            "folder-0-path": "/data/tv",
         },
     )
     assert resp.status_code == 200  # softened so htmx swaps the message
-    assert "token" in resp.text.lower()
+    assert "already exists" in resp.text.lower()
     assert resp.headers.get("hx-retarget") == "#form-error"
-    assert engine.rebuild_calls == before  # core raised before writing/rebuilding
-    assert not any(s.name == "BadPlex" for s in repo.list_servers())
+    assert engine.rebuild_calls == before  # nothing rebuilt
+    assert len(repo.list_servers()) == 1  # the duplicate (and its folder) never landed
 
 
 def test_ui_update_server_keeps_secret_when_blank_and_rebuilds(
@@ -104,41 +154,101 @@ def test_ui_delete_server_swaps_list_and_rebuilds(
     assert repo.get_server(sid) is None
 
 
-def test_ui_create_and_delete_folder(
+def test_ui_sync_folders_replaces_whole_set(
     auth_client: httpx.Client,
     repo,
     engine,  # type: ignore[no-untyped-def]
 ) -> None:
     sid = _seed_plex(repo)
+    repo.create_folder(sid, FolderCreate(path="/old", extensions=["mkv"]))  # will be dropped
+    before = engine.rebuild_calls
+    # The detail editor saves the WHOLE list at once: /old is omitted (deleted), two rows added,
+    # a blank row skipped. One rebuild for the wholesale replace.
     resp = auth_client.post(
         f"/ui/servers/{sid}/folders",
-        data={"path": "/data/tv", "library_id": "2", "extensions": "mkv, mp4", "enabled": "on"},
+        data={
+            "folder-0-path": "/data/tv",
+            "folder-0-library_id": "2",
+            "folder-0-extensions": "mkv, mp4",
+            "folder-0-enabled": "on",
+            "folder-1-path": "",  # skipped
+            "folder-2-path": "/data/movies",
+            "folder-2-extensions": "mkv",
+        },
     )
     assert resp.status_code == 200
-    assert "/data/tv" in resp.text
-    folders = repo.list_folders(sid)
-    assert len(folders) == 1
-    fid = folders[0].id
-
-    resp2 = auth_client.post(f"/ui/folders/{fid}/delete")
-    assert resp2.status_code == 200
-    assert repo.list_folders(sid) == []
+    assert "saved" in resp.text.lower()
+    assert engine.rebuild_calls == before + 1
+    assert {f.path for f in repo.list_folders(sid)} == {"/data/tv", "/data/movies"}  # /old gone
 
 
-def test_ui_update_folder_replaces_extensions(
+def test_ui_sync_folders_empty_clears_all(
     auth_client: httpx.Client,
     repo,  # type: ignore[no-untyped-def]
 ) -> None:
     sid = _seed_plex(repo)
-    repo.create_folder(sid, FolderCreate(path="/data/tv", library_id="2", extensions=["mkv"]))
-    fid = repo.list_folders(sid)[0].id
+    repo.create_folder(sid, FolderCreate(path="/data/tv", extensions=["mkv"]))
+    resp = auth_client.post(f"/ui/servers/{sid}/folders", data={"folder-0-path": ""})
+    assert resp.status_code == 200
+    assert repo.list_folders(sid) == []  # an all-blank save is a valid "no folders"
+
+
+def test_ui_update_persists_webhook_fields(
+    auth_client: httpx.Client,
+    repo,
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    server = repo.create_server(
+        ServerCreate(name="hook", type=ServerType.webhook, webhook_method="POST")
+    )
+    sid = int(server.id)
     resp = auth_client.post(
-        f"/ui/folders/{fid}/update",
-        data={"path": "/data/tv", "library_id": "2", "extensions": "mp4", "enabled": "on"},
+        f"/ui/servers/{sid}/update",
+        data={
+            "name": "hook",
+            "scan_mode": "library",
+            "debounce_mode": "off",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "1",
+            "timeout_seconds": "10",
+            "webhook_method": "PUT",
+            "webhook_headers_json": '{"X-Token": "abc"}',
+            "webhook_body_template": '{"path": "x"}',
+        },
     )
     assert resp.status_code == 200
-    exts = [ft.extension for ft in repo.list_folders(sid)[0].filetypes]
-    assert exts == ["mp4"]
+    updated = repo.get_server(sid)
+    assert updated.webhook_method == "PUT"  # webhook fields now editable on the detail page
+    assert updated.webhook_headers_json == '{"X-Token": "abc"}'
+
+
+@respx.mock
+def test_ui_test_stored_server_renders_result(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+) -> None:
+    server = repo.create_server(
+        ServerCreate(name="emby", type=ServerType.emby, base_url="http://emby:8096", secret="t")
+    )
+    respx.get("http://emby:8096/System/Info").mock(return_value=httpx.Response(200))
+    resp = auth_client.post(f"/ui/servers/{server.id}/test")
+    assert resp.status_code == 200
+    assert "test-ok" in resp.text  # shared _test_result.html, success styling
+
+
+@respx.mock
+def test_ui_test_form_config_renders_result_without_saving(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+) -> None:
+    respx.get("http://emby:8096/System/Info").mock(return_value=httpx.Response(401))
+    resp = auth_client.post(
+        "/ui/servers/test",
+        data={"type": "emby", "base_url": "http://emby:8096", "secret": "t", "verify_tls": "on"},
+    )
+    assert resp.status_code == 200
+    assert "test-fail" in resp.text  # 401 -> failure
+    assert repo.list_servers() == []  # test-before-save never persists
 
 
 def test_ui_delete_server_nonexistent_returns_200(
@@ -149,13 +259,10 @@ def test_ui_delete_server_nonexistent_returns_200(
     assert resp.status_code == 200
 
 
-def test_ui_update_folder_nonexistent_returns_200_inline_error(
+def test_ui_sync_folders_missing_server_returns_200_inline_error(
     auth_client: httpx.Client,
 ) -> None:
-    """Updating a non-existent folder returns 200 (not 500) with inline error partial."""
-    resp = auth_client.post(
-        "/ui/folders/9999/update",
-        data={"path": "/data/tv", "library_id": "2", "extensions": "mp4", "enabled": "on"},
-    )
+    """Saving folders for a server that's gone returns 200 (not 500) with inline error."""
+    resp = auth_client.post("/ui/servers/9999/folders", data={"folder-0-path": "/data/tv"})
     assert resp.status_code == 200
     assert resp.headers.get("hx-retarget") == "#folder-error"

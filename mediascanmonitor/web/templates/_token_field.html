@@ -1,0 +1,39 @@
+{# Token control for an EXISTING server (edit mode). Lives inside the shared form's
+   `.field field-secret token-field` wrapper (which carries data-has-secret for the JS in
+   server_detail.html). Tri-state keep / replace / clear; degrades to input + checkbox without JS.
+   Expects: server (ServerRead), secret_clearable (bool). #}
+{% if server.has_secret %}
+<div class="token-stored" data-token-state hidden>
+  <span class="token-mask" aria-hidden="true">••••••••••</span>
+  <span class="token-status">token stored</span>
+  <span class="token-actions">
+    <button type="button" class="token-btn" data-token-action="replace">Replace</button>
+    {% if secret_clearable %}
+    <button type="button" class="token-btn token-btn-danger" data-token-action="clear">Clear</button>
+    {% endif %}
+  </span>
+</div>
+{% if secret_clearable %}
+<div class="token-cleared" data-token-state hidden>
+  <span class="token-mask token-mask-struck" aria-hidden="true">••••••••••</span>
+  <span class="token-status token-status-warn">will be removed on save</span>
+  <span class="token-actions">
+    <button type="button" class="token-btn token-btn-muted" data-token-action="undo">Undo</button>
+  </span>
+</div>
+{% endif %}
+{% endif %}
+
+<div class="token-input" data-token-state>
+  <input type="password" name="secret" autocomplete="new-password"
+         placeholder="{% if server.has_secret %}new token{% else %}none{% endif %}">
+  {% if server.has_secret %}
+  <button type="button" class="token-btn token-btn-muted token-cancel" data-token-action="cancel" hidden>Cancel</button>
+  {% endif %}
+</div>
+
+{% if server.has_secret and secret_clearable %}
+<label class="toggle token-clear-fallback">
+  <input type="checkbox" name="clear_secret"> Clear stored token
+</label>
+{% endif %}

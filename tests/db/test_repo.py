@@ -37,6 +37,64 @@ def test_create_server_without_secret(repo: Repo) -> None:
     assert repo.resolve_secret(server) is None
 
 
+def test_create_server_with_folders_persists_both(repo: Repo) -> None:
+    server = repo.create_server_with_folders(
+        make_server(name="combined"),
+        [
+            FolderCreate(path="/data/tv", library_id="2", extensions=["mkv", "MP4", "mkv"]),
+            FolderCreate(path="/data/movies", extensions=[]),
+        ],
+    )
+    assert server.id is not None
+    folders = repo.list_folders(server.id)
+    assert {f.path for f in folders} == {"/data/tv", "/data/movies"}
+    tv = next(f for f in folders if f.path == "/data/tv")
+    assert sorted(ft.extension for ft in tv.filetypes) == ["mkv", "mp4"]  # normalized + deduped
+
+
+def test_replace_folders_swaps_whole_set(repo: Repo) -> None:
+    server = repo.create_server(make_server(name="batch"))
+    assert server.id is not None
+    repo.create_folder(server.id, FolderCreate(path="/old", extensions=["avi"]))
+    repo.replace_folders(
+        server.id,
+        [
+            FolderCreate(path="/data/tv", extensions=["mkv", "MP4"]),
+            FolderCreate(path="/data/movies", extensions=["mkv"]),
+        ],
+    )
+    folders = repo.list_folders(server.id)
+    assert {f.path for f in folders} == {"/data/tv", "/data/movies"}  # /old replaced wholesale
+    tv = next(f for f in folders if f.path == "/data/tv")
+    assert sorted(ft.extension for ft in tv.filetypes) == ["mkv", "mp4"]
+
+
+def test_replace_folders_empty_clears_all(repo: Repo) -> None:
+    server = repo.create_server(make_server(name="clearme"))
+    assert server.id is not None
+    repo.create_folder(server.id, FolderCreate(path="/x", extensions=["mkv"]))
+    repo.replace_folders(server.id, [])
+    assert repo.list_folders(server.id) == []
+
+
+def test_replace_folders_unknown_server_raises(repo: Repo) -> None:
+    with pytest.raises(KeyError):
+        repo.replace_folders(9999, [FolderCreate(path="/data/tv", extensions=["mkv"])])
+
+
+def test_create_server_with_folders_is_atomic_on_duplicate_name(repo: Repo) -> None:
+    existing = repo.create_server(make_server(name="dupe"))
+    assert existing.id is not None
+    with pytest.raises(IntegrityError):
+        repo.create_server_with_folders(
+            make_server(name="dupe"), [FolderCreate(path="/data/tv", extensions=["mkv"])]
+        )
+    # The whole transaction rolled back: no second server was added, and the folder that would
+    # have been created went with it (a committed orphan is impossible — folders FK to a server).
+    assert len(repo.list_servers()) == 1
+    assert repo.list_folders(existing.id) == []
+
+
 def test_get_server_round_trip_and_missing(repo: Repo) -> None:
     created = repo.create_server(make_server())
     assert created.id is not None

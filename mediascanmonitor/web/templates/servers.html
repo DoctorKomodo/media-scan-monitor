@@ -2,74 +2,14 @@
 {% block title %}Servers — media-scan-monitor{% endblock %}
 {% block content %}
 {% include "_nav.html" %}
-<h1>Servers</h1>
+<div class="page-head">
+  <h1>Servers</h1>
+  <a class="cta" href="/servers/new">+ Add server</a>
+</div>
+<p class="page-lede muted">Each server is a channel on the bus — a folder change fans out to every
+  live channel whose paths and file types match.</p>
 
 <div id="server-list">
   {% include "_servers_list.html" %}
 </div>
-
-<section class="card">
-  <h2>Add a server</h2>
-  <div id="form-error"></div>
-  <form id="add-server" hx-post="/ui/servers" hx-target="#server-list" hx-swap="innerHTML">
-    <label>Name <input type="text" name="name" required></label>
-    <label>Type
-      <select name="type" id="type-select">
-        {% for t in server_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-      </select>
-    </label>
-    <label class="field-base_url">Base URL <input type="text" name="base_url"></label>
-    <label class="field-secret">Token <input type="password" name="secret" autocomplete="new-password"></label>
-    <label>Scan mode
-      <select name="scan_mode" id="scan-mode-select">
-        {% for m in scan_modes %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Debounce mode
-      <select name="debounce_mode">
-        {% for m in debounce_modes %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Debounce window (s) <input type="number" name="debounce_window_seconds" value="30"></label>
-    <label>Retry attempts <input type="number" name="retry_attempts" value="3"></label>
-    <label>Timeout (s) <input type="number" step="0.1" name="timeout_seconds" value="10"></label>
-    <label><input type="checkbox" name="verify_tls" checked> Verify TLS</label>
-    <label><input type="checkbox" name="enabled" checked> Enabled</label>
-    <fieldset class="field-webhook">
-      <legend>Webhook</legend>
-      <label>Method <input type="text" name="webhook_method" placeholder="POST"></label>
-      <label>Headers (JSON) <input type="text" name="webhook_headers_json"></label>
-      <label>Body template <textarea name="webhook_body_template" rows="3"></textarea></label>
-    </fieldset>
-    <button type="submit">Add server</button>
-  </form>
-</section>
-
-<script type="application/json" id="type-specs">{{ type_specs | tojson }}</script>
-<script type="application/json" id="scan-modes-by-type">{{ scan_modes_by_type | tojson }}</script>
-<script>
-  // Data-driven per-type form behavior (invariant 6): no literal type names here — the maps come
-  // from SERVER_TYPE_SPECS + supported_scan_modes, serialized server-side.
-  (function () {
-    const specs = JSON.parse(document.getElementById("type-specs").textContent);
-    const modesByType = JSON.parse(document.getElementById("scan-modes-by-type").textContent);
-    const typeSel = document.getElementById("type-select");
-    const modeSel = document.getElementById("scan-mode-select");
-    function apply() {
-      const spec = specs[typeSel.value] || {};
-      const form = document.getElementById("add-server");
-      form.querySelector(".field-secret").style.display = spec.requires_secret ? "" : "none";
-      form.querySelector(".field-base_url").style.display = spec.requires_base_url ? "" : "none";
-      form.querySelector(".field-webhook").style.display = spec.is_webhook ? "" : "none";
-      const modes = modesByType[typeSel.value] || [];
-      modeSel.innerHTML = "";
-      for (const m of modes) {
-        const opt = document.createElement("option");
-        opt.value = m; opt.textContent = m; modeSel.appendChild(opt);
-      }
-    }
-    typeSel.addEventListener("change", apply);
-    apply();
-  })();
-</script>
 {% endblock %}

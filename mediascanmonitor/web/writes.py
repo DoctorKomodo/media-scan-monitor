@@ -9,6 +9,7 @@ is sync SQLModel) → rebuild_engine. Folders carry no secret, so they skip the 
 import asyncio
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from mediascanmonitor.db.models import Folder, Server, ServerType
 from mediascanmonitor.db.repo import Repo
@@ -26,9 +27,44 @@ def _require_secret_or_422(server_type: ServerType, has_secret: bool) -> None:
         )
 
 
+def _name_conflict(name: str) -> HTTPException:
+    """Translate the create path's IntegrityError into a 409 every surface can render.
+
+    The only uniqueness constraint on Server is its name, so a create-time IntegrityError
+    means a duplicate name. Mapping it here (not per-route) keeps /api and /ui consistent
+    instead of one 500-ing while the other shows a friendly message.
+    """
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"A server named {name!r} already exists.",
+    )
+
+
 async def apply_server_create(repo: Repo, engine: Engine, data: ServerCreate) -> Server:
     _require_secret_or_422(data.type, data.secret is not None and data.secret != "")
-    server = await asyncio.to_thread(repo.create_server, data)
+    try:
+        server = await asyncio.to_thread(repo.create_server, data)
+    except IntegrityError as exc:
+        raise _name_conflict(data.name) from exc
+    await rebuild_engine(engine)
+    return server
+
+
+async def apply_server_create_with_folders(
+    repo: Repo, engine: Engine, server_data: ServerCreate, folders: list[FolderCreate]
+) -> Server:
+    """Create a server and its folders atomically, then rebuild once.
+
+    Same token-required gate as apply_server_create; the single transactional repo write
+    means a rejected/duplicate server never leaves orphan folders. One rebuild covers both.
+    """
+    _require_secret_or_422(
+        server_data.type, server_data.secret is not None and server_data.secret != ""
+    )
+    try:
+        server = await asyncio.to_thread(repo.create_server_with_folders, server_data, folders)
+    except IntegrityError as exc:
+        raise _name_conflict(server_data.name) from exc
     await rebuild_engine(engine)
     return server
 
@@ -70,6 +106,18 @@ async def apply_folder_create(
     folder = await asyncio.to_thread(repo.get_folder, created.id)
     assert folder is not None
     return folder
+
+
+async def apply_folders_sync(
+    repo: Repo, engine: Engine, server_id: int, folders: list[FolderCreate]
+) -> None:
+    """Replace a server's whole folder set with ``folders``, then rebuild once.
+
+    The detail page's single folder editor saves the entire list at once (edit / add / remove
+    all reconciled by the wholesale replace). An empty list is a valid "no folders" save.
+    """
+    await asyncio.to_thread(repo.replace_folders, server_id, folders)
+    await rebuild_engine(engine)
 
 
 async def apply_folder_update(

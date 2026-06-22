@@ -39,24 +39,48 @@ def test_dashboard_renders_engine_and_watch_status(auth_client: httpx.Client, en
     assert "max_user_watches" in body  # the recommended sysctl line
 
 
-def test_servers_page_lists_servers_and_add_form(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+def test_servers_page_lists_servers_and_links_to_add(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     _seed_server(repo)
     resp = auth_client.get("/servers")
     assert resp.status_code == 200
     assert "Plex Main" in resp.text
-    assert 'name="type"' in resp.text  # the add-server form is present
+    assert "/servers/new" in resp.text  # add now lives on its own page, linked from here
+
+
+def test_server_new_page_has_server_and_folder_fields(auth_client: httpx.Client) -> None:
+    resp = auth_client.get("/servers/new")
+    assert resp.status_code == 200
+    assert 'name="type"' in resp.text  # the server form
+    assert 'name="folder-0-path"' in resp.text  # the first (combined) folder row
+    assert "/ui/servers/test" in resp.text  # the "test before save" button
+
+
+def test_server_detail_and_new_share_folder_add_and_form(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    sid = _seed_server(repo)
+    detail = auth_client.get(f"/servers/{sid}").text
+    new = auth_client.get("/servers/new").text
+    # Both pages render the same shared field sections and the same batch folder-add component.
+    for marker in ("Reliability", 'name="folder-0-path"', "data-folder-editor"):
+        assert marker in detail and marker in new
+
+
+def test_webhook_fields_only_shown_for_webhook_servers(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    plex = _seed_server(repo)  # a plex server
+    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook))
+    assert 'name="webhook_method"' not in auth_client.get(f"/servers/{plex}").text
+    assert 'name="webhook_method"' in auth_client.get(f"/servers/{hook.id}").text
 
 
 def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     sid = _seed_server(repo)
-    folder_id = repo.list_folders(sid)[0].id
     resp = auth_client.get(f"/servers/{sid}")
     assert resp.status_code == 200
     assert "Test" in resp.text  # Test button present
-    # The folder ROW must render on full page load, not just via the htmx add-response.
-    # (Asserting "/data/tv" alone is a false positive — it is also the add-form placeholder.)
-    assert "No folders yet." not in resp.text
-    assert f"/ui/folders/{folder_id}/update" in resp.text  # the row's edit form is present
+    # The existing folder is pre-loaded into the unified editor as an editable row, and the
+    # whole list saves to one sync endpoint (no per-row update/delete forms anymore).
+    assert 'value="/data/tv"' in resp.text
+    assert "data-folder-editor" in resp.text
+    assert f'/ui/servers/{sid}/folders' in resp.text
 
 
 def test_server_detail_404_for_missing(auth_client: httpx.Client) -> None:
