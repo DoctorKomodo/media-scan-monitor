@@ -2,7 +2,7 @@
 
 services:
   media-scan-monitor:
-    image: ghcr.io/doctorkomodo/media-scan-monitor:app-v2
+    image: ghcr.io/doctorkomodo/media-scan-monitor:latest
     container_name: media-scan-monitor
     restart: unless-stopped
     init: true
@@ -28,7 +28,7 @@ services:
       # Media sources — LOCAL storage only (inotify does not work over NFS/SMB).
       # Container path must match what your media server uses for the same library.
       - /path/to/your/media:/data/media:ro
-      # - /volume2/tvseries:/data/tvseries:ro
+      # - /path/to/your/tvseries:/data/tvseries:ro
 
     # secrets:
     #   - msm_password

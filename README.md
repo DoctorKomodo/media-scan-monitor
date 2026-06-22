@@ -11,8 +11,8 @@ It is a **Python application, shipped as a Docker image**, configured entirely f
 **SQLite**.
 
 > **Image:** `ghcr.io/doctorkomodo/media-scan-monitor`
-> (published to GHCR; currently a pre-release on the `app-v2` tag while the rewrite is
-> validated on real hardware — the `latest` tag activates at cutover to `main`).
+> (published to GHCR; `latest` tracks the `main` branch, and semver tags are published on
+> `v*` releases).
 
 ## Why?
 
@@ -81,7 +81,7 @@ the directory before starting.
 
 The repo ships a ready-to-use `docker-compose.yml` (don't hand-write one — that would drift from
 the file the project maintains). Copy it from the repo (clone, or download
-`docker-compose.yml` from the `app-v2` branch) and edit two things before starting:
+`docker-compose.yml` from the `main` branch) and edit two things before starting:
 
 - **Media bind-mount** — replace the placeholder `/path/to/media:/data/media:ro` with your own
   local media directory. ⚠️ **Local storage only — inotify does not work over NFS/SMB.** The
