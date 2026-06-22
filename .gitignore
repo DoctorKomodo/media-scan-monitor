@@ -28,3 +28,7 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local dev instance state (scripts/dev_serve.sh)
+dev-data/
+dev-data-serve.log
