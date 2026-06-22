@@ -44,6 +44,13 @@ able to **type or paste** a path by hand.
 4. **Hide ignore dirs:** `@eaDir` and `#snapshot` (the watcher's legacy ignore set) are
    never valid watch targets, so the browser omits them. All other directories are
    shown, including dotfiles.
+5. **Normalize without resolving symlinks:** the stored path is `normpath(abspath(...))`
+   (collapse `..`, make absolute), **not** `Path.resolve()`. Resolving would rewrite a
+   symlinked media dir to its real target, which may not be the path the watcher sees
+   inside the container — silently producing the "watches nothing" folder this feature
+   is meant to prevent. All navigation already supplies absolute paths from the listing,
+   so symlink resolution buys nothing. (It also means `tmp_path` tests don't hit the
+   macOS `/private` symlink rewrite.)
 
 ## Architecture
 
@@ -52,32 +59,42 @@ able to **type or paste** a path by hand.
 A small, dependency-free, unit-testable module. No FastAPI, no DB.
 
 ```python
-class DirEntry(BaseModel):
+class FsEntry(BaseModel):           # not DirEntry — avoid shadowing os.DirEntry
     name: str   # basename, e.g. "tv"
     path: str   # absolute, e.g. "/data/tv"
 
 class DirListing(BaseModel):
-    path: str               # resolved absolute dir being listed, e.g. "/data"
-    parent: str | None      # absolute parent, or None when path == "/"
-    entries: list[DirEntry] # immediate subdirectories, sorted
+    path: str               # normalized absolute dir being listed, e.g. "/data"
+    parent: str | None      # absolute parent, or None at the filesystem root
+    entries: list[FsEntry]  # immediate subdirectories, sorted
+    truncated: bool = False  # True when the entry cap clipped the listing
 
 IGNORED_DIR_NAMES = frozenset({"@eaDir", "#snapshot"})
+MAX_ENTRIES = 1000           # cap an enormous dir; surfaced as truncated=True
 
 def list_directory(path: str) -> DirListing: ...
 ```
 
 Behaviour:
-- Resolve the input with `Path(path or "/").resolve()` to normalize `..` and symlinks
-  to an absolute path. An empty/blank path means `/`.
-- `os.scandir` the resolved dir; keep entries where `entry.is_dir(follow_symlinks=True)`
-  and `name not in IGNORED_DIR_NAMES`. Files are dropped.
+- Normalize the input with `os.path.normpath(os.path.abspath(path or "/"))` — collapse
+  `..` and make it absolute **without resolving symlinks** (see decision 5). An
+  empty/blank path means `/`.
+- `os.scandir` the dir; keep entries where `entry.is_dir(follow_symlinks=True)` and
+  `name not in IGNORED_DIR_NAMES`. Files are dropped. `follow_symlinks=True` so a
+  symlinked media dir is still browsable; the entry's stored `path` is the (un-resolved)
+  `parent/name`, so navigating it preserves the symlink path rather than its target.
+- Stop after `MAX_ENTRIES` kept entries and set `truncated=True` (a dir with thousands
+  of children stays bounded; the partial notes the clip).
 - Sort entries case-insensitively by name.
-- `parent` is `None` when the resolved path is the filesystem root, else its parent.
+- `parent` is `None` when the normalized path is the filesystem root, else its parent.
 - Raises the underlying `OSError` subclass on failure: `FileNotFoundError` (gone),
   `NotADirectoryError` (path is a file), `PermissionError` (unreadable). The route maps
   these to a friendly inline message — the core does not format errors.
-- Per-entry `is_dir`/scan errors (e.g. a single unreadable child) are swallowed so one
-  bad child doesn't blank the whole listing.
+- Per-entry `is_dir`/scan errors (e.g. a single unreadable child, or `is_dir` stalling
+  briefly on a stale mount) are swallowed so one bad child doesn't blank the listing.
+  Known tradeoff: `is_dir(follow_symlinks=True)` on a dead NAS mount can briefly tie up
+  the `to_thread` worker for that one request — accepted, since it runs off the event
+  loop and never blocks the app; the `MAX_ENTRIES` cap bounds the rest.
 
 ### Backend — route in `mediascanmonitor/web/pages.py`
 
@@ -97,37 +114,60 @@ GET /ui/fs?path=<dir>  ->  renders _fs_listing.html  (page-auth guarded)
 ### Templates
 
 - **`_fs_listing.html`** — the swappable inner body of the dialog (`#fs-listing`):
-  - **Breadcrumb**: `/ › data › tv`. Each segment is an `hx-get="/ui/fs?path=<segment>"`
-    targeting `#fs-listing` with `hx-swap="innerHTML"`. The leading `/` is its own
-    segment (lists root). The current (last) segment is inert text.
+  - **Breadcrumb**: `/ › data › tv`. Each crumb carries its **cumulative absolute
+    path** (clicking `data` sends `path=/data`, not `path=data`), as
+    `hx-get="/ui/fs?path={{ crumb_path | urlencode }}"` targeting `#fs-listing` with
+    `hx-swap="innerHTML"`. **Every** emitted `path` is `| urlencode`d — folder names
+    legally contain spaces / `#` / `&` / `+` (exactly the paths the picker is for), and
+    an unescaped query would navigate wrong. The leading `/` is its own crumb (lists
+    root). The current (last) crumb is inert text.
   - **Parent entry**: a `..` row, present unless `parent is None`, `hx-get`ting the
-    parent. Omitted at `/`.
-  - **Entry list**: one row per subdirectory, each `hx-get`ting its own `path` into
-    `#fs-listing`.
-  - **Current path + Select**: the resolved `path` is shown above the actions and
+    parent. Omitted at the root.
+  - **Entry list**: one row per subdirectory, each `hx-get`ting its own (urlencoded)
+    `path` into `#fs-listing`.
+  - **Current path + Select**: the normalized `path` is shown above the actions and
     carried on a `data-current-path` attribute (read by the Select handler). In the
     error state this region shows the inline error and Select is disabled.
+  - **Truncation note**: when `truncated`, a muted line ("Showing first 1000 folders —
+    narrow down by navigating in") sits under the list.
 - **`_folder_picker.html`** — the `<dialog data-folder-picker>` shell: title
   ("Browse folders"), a close `✕`, the `#fs-listing` slot, and the footer
-  (Cancel / Select this folder). Rendered **once** per page.
-- **`_folder_editor.html`** — each row (and the `<template>` row used by the add-row
-  script) gains a **Browse** button next to the path input, carrying
-  `data-browse` so the script can wire it. `_folder_picker.html` is `{% include %}`d
-  once at the bottom of the editor.
+  (Cancel / Select this folder). Footer buttons are `type="button"` so they never submit
+  the surrounding folder `<form>`. Rendered **once** per page. **Assumes one folder
+  editor per page** (true today: both `/servers/new` and `/servers/{id}` render one).
+  The single shared dialog + the unique `id="fs-listing"` depend on that; if two editors
+  ever co-exist this must become per-editor — noted so it trips a doc, not a silent bug.
+- **`_folder_editor.html`** — the path `<input>` and a **Browse** button are wrapped
+  together **inside the existing first grid cell** (a flex wrapper), so the row stays a
+  5-column grid aligned to its header (`app.css:659`) — the Browse button is *not* a 6th
+  grid child. The button carries `data-browse`. Both the rendered rows **and** the
+  `<template>` row (cloned by the add-row script) get the wrapper + button.
+  `_folder_picker.html` is `{% include %}`d once at the bottom of the editor.
 
 ### JS — extend `_folder_rows_script.html`
 
 A second IIFE alongside the existing add/remove logic:
+- **Event delegation**, not per-button listeners — new rows are cloned from the
+  `<template>` via `insertAdjacentHTML`, so a `data-browse` click is caught by a single
+  delegated handler on the editor (mirroring the existing delegated `data-folder-remove`
+  handler in `_folder_rows_script.html`). Per-button binding would miss cloned rows.
 - On a `data-browse` click: record that row's path `<input>` as the active target,
   open the dialog (`dialog.showModal()`), and trigger an htmx GET to load the listing
   for the input's current value (or `/` if blank).
 - **Select**: read `data-current-path` from `#fs-listing`, write it into the recorded
   input, `dialog.close()`. (No-op + keep dialog open if the listing is in the error
-  state / has no current path.)
-- **Cancel / `✕` / backdrop click / Esc**: close without changing the input.
-- **Progressive enhancement**: the Browse button is `hidden` in markup and revealed by
-  the script, so no-JS users keep a fully working free-text input — identical to the
-  token-field pattern. The `<dialog>` degrades to inert when unsupported/JS-off.
+  state / has no current path.) **Disabled while a navigation request is in flight**
+  (toggle on htmx `htmx:beforeRequest` / re-enable on `htmx:afterSwap`, or via the
+  `.htmx-request` class) so Select can't capture a stale pre-swap path.
+- **Cancel / `✕` / Esc**: close without changing the input. **Backdrop click**: close
+  only when `event.target === dialog` (clicks on the dialog's own content also bubble to
+  the dialog, so the target check is required to avoid closing on every inner click).
+- **Progressive enhancement**: the Browse button is hidden by default in CSS and
+  revealed by adding a `picker-ready` class to the **editor ancestor** once the script
+  runs (`.picker-ready [data-browse] { ... }`), so *cloned* rows inherit visibility too
+  — a per-element `hidden` removal at load time would leave later-added rows' buttons
+  hidden. No-JS users keep a fully working free-text input; the `<dialog>` degrades to
+  inert when unsupported/JS-off.
 
 ### Visual language ("Signal Room", reusing existing tokens)
 
@@ -176,15 +216,26 @@ Cancel / Esc / backdrop
 - Missing dir / file-not-dir / permission denied → 200 with `_fs_listing.html` in error
   state (breadcrumb to requested path preserved; Select disabled). No 500s reach htmx.
 - Unreadable child during scan → that child is skipped; the listing still renders.
-- Server gone / auth lost → handled by the existing page-auth guard (303), unchanged.
+- Enormous dir → clipped at `MAX_ENTRIES` with a `truncated` note; never unbounded.
+- Auth lost mid-session → the guard 303s to `/login`, which the browser fetch follows
+  transparently, so htmx would swap the login HTML into `#fs-listing`. This is
+  pre-existing behaviour for *every* `/ui` htmx route (not new here), but it looks worse
+  inside a modal. Not a blocker; noted for awareness.
 
 ## Security
 
 - Same trust model as today: every `/ui/*` route, including `/ui/fs`, is behind
-  `require_page_auth`. The listing is read-only (directory names only — no contents, no
-  files, no sizes). It exposes nothing the app couldn't already read to watch a path.
-- `Path.resolve()` normalizes traversal to a real absolute path before listing; there is
-  no "escape" to defend because the intended scope *is* the whole filesystem.
+  `require_page_auth`. The listing is read-only — directory **names** only, no contents,
+  no files, no sizes.
+- Honest scope note: this *does* broaden the post-auth surface. Today an authed admin
+  sets arbitrary watch paths; with this they can also **enumerate the entire container
+  tree** (`/config` — which holds the Fernet key + `app.db`, `/etc`, home dirs, `/proc`,
+  …). Names only, no contents — no secret is read — but it's enumeration the admin
+  couldn't do before, not strict parity. Accepted for a single-password admin tool whose
+  whole job is pointing at host paths; recorded here so the decision is explicit.
+- `normpath(abspath(...))` collapses `..` to a real absolute path before listing; there
+  is no "escape" to defend against because the intended scope *is* the whole filesystem.
+  Symlinks are deliberately **not** resolved (decision 5).
 
 ## Testing (pyramid, rule 6)
 
@@ -193,14 +244,18 @@ Cancel / Esc / backdrop
   - entries sorted case-insensitively;
   - `parent` computed correctly; `/` (or root) yields `parent is None`;
   - `@eaDir` / `#snapshot` skipped, other/dot dirs kept;
-  - `..` / relative / symlinked input resolves to an absolute path;
-  - raises `FileNotFoundError` / `NotADirectoryError` (file input); permission case
-    where feasible.
+  - `..` / relative input normalizes to an absolute path; a **symlinked** dir keeps its
+    symlink path (not the resolved target — guards decision 5);
+  - `truncated=True` once past `MAX_ENTRIES`;
+  - raises `FileNotFoundError` (missing) / `NotADirectoryError` (file input);
+    `PermissionError` test guarded with `@pytest.mark.skipif(os.geteuid() == 0, ...)`
+    — uid 0 (likely in CI) bypasses mode bits, so an unguarded test would silently
+    pass-by-skip or fail.
 - **Route — `tests/web/test_pages.py`**:
   - authed `GET /ui/fs?path=<tmp>` → 200 listing the dir's subfolder names;
   - anon → 303 (guard);
   - bad path → 200 with inline error text (htmx-swappable, not 500);
-  - resolves `..` to the expected parent.
+  - normalizes `..` to the expected parent.
 - **Render smoke**: the folder editor renders the `data-browse` Browse marker and the
   `data-folder-picker` dialog on both `/servers/new` and `/servers/{id}`.
 - **Existing suites** (`test_ui_forms.py`, `test_repo.py`) remain green — the picker only
@@ -210,7 +265,7 @@ Cancel / Esc / backdrop
 
 | File | Change |
 | --- | --- |
-| `mediascanmonitor/web/fsbrowse.py` | new — `DirEntry`/`DirListing`/`list_directory` |
+| `mediascanmonitor/web/fsbrowse.py` | new — `FsEntry`/`DirListing`/`list_directory` |
 | `mediascanmonitor/web/pages.py` | new `GET /ui/fs` route + error mapping |
 | `mediascanmonitor/web/templates/_fs_listing.html` | new — listing partial |
 | `mediascanmonitor/web/templates/_folder_picker.html` | new — `<dialog>` shell |
