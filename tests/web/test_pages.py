@@ -145,6 +145,17 @@ def test_ui_fs_root_crumb_is_a_navigable_link_not_an_inert_label(auth_client: ht
     assert "fs-crumb-here" not in resp.text  # nothing is the inert current-location label at root
 
 
+def test_ui_fs_root_crumb_has_no_redundant_leading_separator(
+    auth_client: httpx.Client, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    # The root "/" is itself the leading divider, so it must not be followed by a separator slash —
+    # that rendered a "//" prefix (e.g. "//home/asg"). Only the root crumb's label is "/", so a
+    # root-button immediately followed by a separator span is exactly the regression.
+    resp = auth_client.get("/ui/fs", params={"path": str(tmp_path)})
+    assert resp.status_code == 200
+    assert '>/</button><span class="fs-crumb-sep">' not in resp.text
+
+
 def test_folder_picker_present_on_new_and_detail(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     sid = _seed_server(repo)
     for body in (auth_client.get("/servers/new").text, auth_client.get(f"/servers/{sid}").text):
