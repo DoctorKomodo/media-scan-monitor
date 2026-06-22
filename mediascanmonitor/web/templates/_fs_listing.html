@@ -1,0 +1,25 @@
+{# Directory listing for the folder picker (spec 2026-06-22). htmx swaps this into #fs-listing.
+   `crumbs` (cumulative breadcrumb) is always set; `listing` is a DirListing on success or None
+   in the error state; `error` is the inline message then. Every emitted path is | urlencode'd —
+   folder names legally contain spaces / # / & / +. Nav controls are <button type=button> so they
+   never submit the surrounding folder form. #}
+<nav class="fs-crumbs" aria-label="Folder path">
+  {% for c in crumbs %}{% if not loop.last %}<button type="button" class="fs-crumb" hx-get="/ui/fs?path={{ c.path | urlencode }}" hx-target="#fs-listing" hx-swap="innerHTML">{{ c.name }}</button><span class="fs-crumb-sep">/</span>{% else %}<span class="fs-crumb fs-crumb-here">{{ c.name }}</span>{% endif %}{% endfor %}
+</nav>
+{% if error %}
+<p class="fs-error">{{ error }}</p>
+<div class="fs-current" data-current-path=""></div>
+{% else %}
+<ul class="fs-list">
+  {% if listing.parent is not none %}
+  <li><button type="button" class="fs-entry fs-up" hx-get="/ui/fs?path={{ listing.parent | urlencode }}" hx-target="#fs-listing" hx-swap="innerHTML"><span class="fs-icon" aria-hidden="true">&uarr;</span>..</button></li>
+  {% endif %}
+  {% for e in listing.entries %}
+  <li><button type="button" class="fs-entry" hx-get="/ui/fs?path={{ e.path | urlencode }}" hx-target="#fs-listing" hx-swap="innerHTML"><span class="fs-icon" aria-hidden="true">&rsaquo;</span>{{ e.name }}</button></li>
+  {% else %}
+  <li class="fs-empty">No sub-folders here.</li>
+  {% endfor %}
+</ul>
+{% if listing.truncated %}<p class="fs-trunc">Showing {{ listing.entries | length }} folders (list truncated) — navigate in to narrow down.</p>{% endif %}
+<div class="fs-current" data-current-path="{{ listing.path }}">{{ listing.path }}</div>
+{% endif %}

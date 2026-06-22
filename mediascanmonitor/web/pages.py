@@ -20,6 +20,7 @@ registration may be missed or duplicated.
 import asyncio
 import dataclasses
 import json
+import os
 import re
 from collections.abc import AsyncIterator
 from typing import Any
@@ -44,6 +45,7 @@ from mediascanmonitor.web.deps import (
     get_templates,
     require_page_auth,
 )
+from mediascanmonitor.web.fsbrowse import DirListing, list_directory
 from mediascanmonitor.web.rebuild import rebuild_engine
 from mediascanmonitor.web.servertest import (
     run_connectivity_test,
@@ -279,6 +281,54 @@ async def _servers_list_response(
     servers = await asyncio.to_thread(repo.list_servers)
     return templates.TemplateResponse(
         request=request, name="_servers_list.html", context={"servers": servers}
+    )
+
+
+def _path_crumbs(path: str) -> list[dict[str, str]]:
+    """Breadcrumb segments with cumulative absolute paths: /data/tv → [/, /data, /data/tv]."""
+    crumbs = [{"name": "/", "path": "/"}]
+    acc = ""
+    for part in (p for p in path.split("/") if p):
+        acc = f"{acc}/{part}"
+        crumbs.append({"name": part, "path": acc})
+    return crumbs
+
+
+def _fs_error_message(exc: OSError) -> str:
+    """Map a listing failure to a short, user-facing line (the core raises, the route phrases)."""
+    if isinstance(exc, FileNotFoundError):
+        return "That folder no longer exists."
+    if isinstance(exc, NotADirectoryError):
+        return "That path is a file, not a folder."
+    if isinstance(exc, PermissionError):
+        return "Permission denied reading that folder."
+    return "Couldn't read that folder."
+
+
+@router.get("/ui/fs")
+async def ui_browse_fs(
+    request: Request,
+    path: str = "",
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    # Read-only directory browser for the folder picker (spec 2026-06-22). Lists immediate
+    # subdirectories off the event loop. On any OSError we still render the listing partial in
+    # an error state (200, so htmx swaps it) with the breadcrumb to the requested path so the
+    # user can climb back out — same "errors render inline" convention as the /ui form handlers.
+    requested = os.path.normpath(os.path.abspath(path or "/"))
+    listing: DirListing | None = None
+    error: str | None = None
+    try:
+        listing = await asyncio.to_thread(list_directory, path)
+    except OSError as exc:
+        error = _fs_error_message(exc)
+    # Crumbs from the listing's own normalized path on success (single source of truth);
+    # fall back to `requested` only in the error branch where there is no listing.
+    display_path = listing.path if listing is not None else requested
+    return templates.TemplateResponse(
+        request=request,
+        name="_fs_listing.html",
+        context={"listing": listing, "crumbs": _path_crumbs(display_path), "error": error},
     )
 
 

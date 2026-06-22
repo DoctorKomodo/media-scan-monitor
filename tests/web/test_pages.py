@@ -104,3 +104,32 @@ def test_pages_redirect_when_anon(client: httpx.Client) -> None:
     for path in ("/servers", "/settings", "/events"):
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 303, path
+
+
+def test_ui_fs_lists_subdirs_for_authed(auth_client: httpx.Client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "movies").mkdir()
+    (tmp_path / "tv").mkdir()
+    (tmp_path / "note.txt").write_text("x")
+    resp = auth_client.get("/ui/fs", params={"path": str(tmp_path)})
+    assert resp.status_code == 200
+    assert "movies" in resp.text and "tv" in resp.text
+    assert "note.txt" not in resp.text
+    assert f'data-current-path="{tmp_path}"' in resp.text  # the JS hook the picker reads
+
+
+def test_ui_fs_bad_path_renders_inline_error_not_500(auth_client: httpx.Client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    resp = auth_client.get("/ui/fs", params={"path": str(tmp_path / "missing")})
+    assert resp.status_code == 200  # rendered inline so htmx can swap it, never a 500
+    assert "no longer exists" in resp.text.lower()
+
+
+def test_ui_fs_normalizes_dotdot(auth_client: httpx.Client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "a").mkdir()
+    resp = auth_client.get("/ui/fs", params={"path": str(tmp_path / "a" / "..")})
+    assert resp.status_code == 200
+    assert f'data-current-path="{tmp_path}"' in resp.text
+
+
+def test_ui_fs_redirects_when_anon(client: httpx.Client) -> None:
+    r = client.get("/ui/fs", params={"path": "/"}, follow_redirects=False)
+    assert r.status_code == 303
