@@ -300,7 +300,11 @@ import re
 
 - [ ] **Step 4: Import the core in `pages.py`**
 
-Add this import alongside the other `mediascanmonitor.web.*` imports (keep isort order — it sorts before `servertest`):
+Add this import alongside the other `mediascanmonitor.web.*` imports. isort places it
+**between the `...web.deps` and `...web.rebuild` imports** (alphabetical: `api_schemas`,
+`deps`, `fsbrowse`, `rebuild`, `servertest`, `writes`). The gate runs `ruff check` without
+`--fix`, so a misplaced import fails `I001` rather than auto-correcting — run
+`uv run ruff check --fix mediascanmonitor/web/pages.py` after editing if unsure of the slot.
 
 ```python
 from mediascanmonitor.web.fsbrowse import DirListing, list_directory
@@ -349,10 +353,13 @@ async def ui_browse_fs(
         listing = await asyncio.to_thread(list_directory, path)
     except OSError as exc:
         error = _fs_error_message(exc)
+    # Crumbs from the listing's own normalized path on success (single source of truth);
+    # fall back to `requested` only in the error branch where there is no listing.
+    display_path = listing.path if listing is not None else requested
     return templates.TemplateResponse(
         request=request,
         name="_fs_listing.html",
-        context={"listing": listing, "crumbs": _path_crumbs(requested), "error": error},
+        context={"listing": listing, "crumbs": _path_crumbs(display_path), "error": error},
     )
 ```
 
@@ -585,12 +592,15 @@ In `mediascanmonitor/web/templates/_folder_rows_script.html`, add a second `<scr
       });
     }
 
-    // Stale-path guard: disable Select while a navigation is in flight, re-enable once swapped.
+    // Stale-path guard: disable Select while a navigation is in flight. After each swap,
+    // enable it only when the new listing has a real current path — so the error state (which
+    // renders data-current-path="") leaves Select disabled, per the spec.
     listing.addEventListener("click", (event) => {
       if (event.target.closest("[hx-get]")) select.disabled = true;
     });
     listing.addEventListener("htmx:afterSwap", () => {
-      select.disabled = false;
+      const current = listing.querySelector("[data-current-path]");
+      select.disabled = !(current && current.dataset.currentPath);
     });
 
     dialog.addEventListener("click", (event) => {
@@ -677,7 +687,7 @@ Append to `mediascanmonitor/web/static/app.css`:
 }
 .fs-crumb { font: inherit; color: var(--signal); background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; }
 .fs-crumb:hover { text-decoration: underline; text-underline-offset: 2px; }
-.fs-crumb-sep { color: var(--faint); margin: 0 0.2rem; }
+.fs-crumb-sep { color: var(--signal); margin: 0 0.2rem; }  /* echoes the channel route arrow */
 span.fs-crumb-here { color: var(--text); cursor: default; }
 
 .fs-listing { display: flex; flex-direction: column; min-height: 0; }
@@ -722,6 +732,14 @@ span.fs-crumb-here { color: var(--text); cursor: default; }
 }
 .fs-select:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
 .fs-select:disabled { opacity: 0.5; cursor: default; }
+
+/* Mobile: the path input + Browse wrapper takes its own full-width line, the way the
+   bare path input did before it was wrapped. Without this the existing
+   `@media (max-width:680px)` rules (which size `.nf-row`'s *direct* input children) no
+   longer reach the now-nested path input, and the row's mobile stacking collapses. */
+@media (max-width: 680px) {
+  .nf-path { flex: 1 1 100%; }
+}
 ```
 
 - [ ] **Step 3: Run the gate**
@@ -740,6 +758,7 @@ scripts/dev_serve.sh   # serves on 0.0.0.0:8099, password "dev"
 In a browser (log in with `dev`), verify on **both** `/servers/new` and an existing server's detail page:
 
 1. Each folder row shows a **Browse** button next to the path input; rows stay aligned to the header (no column shift). Add a row with "+ Add another folder" — the new row also has a working Browse button.
+   - **Narrow viewport (≤680px):** resize the window below 680px and confirm the path input + Browse still take their own full-width line and library/extensions/toggle/remove stack beneath as before (this is the layout the `.nf-path` mobile rule protects).
 2. Click **Browse** → the dialog opens and lists the starting dir (`/` when the path is blank, else the typed path).
 3. Click a folder name → the listing navigates in; the breadcrumb updates; `..` and breadcrumb segments navigate back out.
 4. Click **Select this folder** → the dialog closes and the row's path input holds the current path. **Cancel**, the `✕`, **Esc**, and a backdrop click all close without changing the input.

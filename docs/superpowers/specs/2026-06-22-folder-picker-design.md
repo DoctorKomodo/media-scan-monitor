@@ -128,8 +128,9 @@ GET /ui/fs?path=<dir>  ->  renders _fs_listing.html  (page-auth guarded)
   - **Current path + Select**: the normalized `path` is shown above the actions and
     carried on a `data-current-path` attribute (read by the Select handler). In the
     error state this region shows the inline error and Select is disabled.
-  - **Truncation note**: when `truncated`, a muted line ("Showing first 1000 folders —
-    narrow down by navigating in") sits under the list.
+  - **Truncation note**: when `truncated`, a muted line ("Showing N folders (list
+    truncated) — navigate in to narrow down") sits under the list. ("N", not "first N":
+    the cap takes an arbitrary subset before sorting, not the alphabetical first N.)
 - **`_folder_picker.html`** — the `<dialog data-folder-picker>` shell: title
   ("Browse folders"), a close `✕`, the `#fs-listing` slot, and the footer
   (Cancel / Select this folder). Footer buttons are `type="button"` so they never submit
