@@ -657,7 +657,9 @@ pre code { border: 0; background: none; padding: 0; }
 .nf-intro { margin: 0 0 0.9rem; }
 .nf-head, .nf-row {
   display: grid;
-  grid-template-columns: 2.4rem minmax(0, 1fr) minmax(6rem, 11rem) 5rem;
+  /* Library fits a full Audiobookshelf GUID (36 chars, ~18rem) without collapsing; Plex/Emby
+     numeric ids just leave it roomy. Path still flexes for the remaining width. */
+  grid-template-columns: 2.4rem minmax(0, 1fr) minmax(18rem, 1fr) 5rem;
   gap: 0.5rem 0.6rem;
   align-items: center;
 }
@@ -834,7 +836,7 @@ pre code { border: 0; background: none; padding: 0; }
   .nf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding: 0.7rem 0; }
   .nf-row input[type="text"] { width: auto; }
   .nf-row input[name$="-path"] { flex: 1 1 100%; }
-  .nf-row input[name$="-library_id"] { flex: 1 1 5rem; }
+  .nf-row input[name$="-library_id"] { flex: 1 1 16rem; }
   .nf-row input[name$="-extensions"] { flex: 1 1 8rem; }
   .nf-row .nf-ext { flex: 1 1 100%; }
   .nf-row .folder-on { margin-left: auto; }

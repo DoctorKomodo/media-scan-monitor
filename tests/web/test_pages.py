@@ -83,7 +83,8 @@ def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, 
     assert f"/ui/servers/{sid}/update" in resp.text  # the one consolidated save form
     assert f"/ui/servers/{sid}/folders" not in resp.text  # separate folder-sync form is gone
     assert "Save changes" in resp.text
-    assert "Delete server" in resp.text
+    # Deleting is done from the servers list ("Remove"), not the detail page.
+    assert "Delete server" not in resp.text
 
 
 def test_server_detail_404_for_missing(auth_client: httpx.Client) -> None:
