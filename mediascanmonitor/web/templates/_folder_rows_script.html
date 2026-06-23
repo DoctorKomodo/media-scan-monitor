@@ -335,6 +335,22 @@
           targetRow.querySelector('input[name$="-library_id"]').value = chosen.value;
           const nameInput = targetRow.querySelector('input[name$="-library_name"]');
           if (nameInput) nameInput.value = chosen.dataset.libName || "";
+          // Upsert the visible friendly-name label so it appears immediately without reload.
+          const libDiv = targetRow.querySelector('.nf-library');
+          const chosenName = chosen.dataset.libName || "";
+          let nameSpan = targetRow.querySelector('.nf-library-name');
+          if (nameSpan) {
+            if (chosenName) {
+              nameSpan.textContent = chosenName;
+            } else {
+              nameSpan.remove();
+            }
+          } else if (chosenName && libDiv) {
+            nameSpan = document.createElement('span');
+            nameSpan.className = 'nf-library-name';
+            nameSpan.textContent = chosenName;
+            libDiv.appendChild(nameSpan);
+          }
           dialog.close();
         }
       }

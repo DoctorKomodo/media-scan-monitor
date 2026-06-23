@@ -675,7 +675,7 @@ pre code { border: 0; background: none; padding: 0; }
 .nf-row .nf-path { grid-area: path; }
 .nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .nf-library-id { flex: 1 1 auto; min-width: 0; }
-.nf-library-name { flex: 1 0 100%; }  /* friendly name wraps to its own line under the id */
+.nf-library-name { flex: 1 0 100%; font: 0.78rem/1.4 var(--sans); color: var(--muted); }  /* friendly name wraps to its own line under the id */
 .nf-row .folder-on { grid-area: on; }
 .nf-row .nf-remove { grid-area: rm; justify-self: end; }
 .nf-head span:nth-child(1) { text-align: center; } /* "On" header centered over its checkbox */
@@ -1067,7 +1067,6 @@ span.fs-crumb-here { color: var(--text); cursor: default; }
 }
 .nf-fetch-lib:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
 .folder-editor.lib-picker-ready[data-library-discovery="true"] .nf-fetch-lib { display: inline-flex; }
-.nf-library-name { font: 0.78rem/1.4 var(--sans); color: var(--muted); }
 
 .lib-listing { display: flex; flex-direction: column; min-height: 0; }
 .lib-options { list-style: none; margin: 0; padding: 0 0.5rem; overflow: auto; max-height: 46vh; }

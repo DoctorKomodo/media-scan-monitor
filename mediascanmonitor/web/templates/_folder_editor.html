@@ -22,7 +22,7 @@
                value="{{ f.library_id or '' }}" placeholder="—" aria-label="Library id">
         <input type="hidden" name="folder-{{ loop.index0 }}-library_name" value="{{ f.library_name or '' }}">
         <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
-        {% if f.library_name %}<span class="nf-library-name muted">{{ f.library_name }}</span>{% endif %}
+        {% if f.library_name %}<span class="nf-library-name">{{ f.library_name }}</span>{% endif %}
       </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
