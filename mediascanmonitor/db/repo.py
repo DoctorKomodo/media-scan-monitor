@@ -131,8 +131,7 @@ class Repo:
                 server.secret_encrypted = self._box.encrypt(secret) if secret is not None else None
             for key, value in fields.items():
                 setattr(server, key, value)
-            session.add(server)
-            session.commit()
+            session.commit()  # server is session-tracked from get(); no add() needed
             return server
 
     def update_server_with_folders(
@@ -156,8 +155,7 @@ class Repo:
             for key, value in fields.items():
                 setattr(server, key, value)
             _set_server_folders(server, folders)
-            session.add(server)
-            session.commit()
+            session.commit()  # server is session-tracked from get(); no add() needed
             return server
 
     def delete_server(self, server_id: int) -> None:
@@ -227,8 +225,7 @@ class Repo:
                 for ext in normalized:
                     # folder_id set by the relationship
                     folder.filetypes.append(FileType(extension=ext))
-            session.add(folder)
-            session.commit()
+            session.commit()  # folder is session-tracked from get(); no add() needed
             _ = folder.filetypes  # force-load while the session is open
             return folder
 
@@ -279,6 +276,5 @@ class Repo:
             if setting is None:
                 session.add(Setting(key=key, value=value))
             else:
-                setting.value = value
-                session.add(setting)
+                setting.value = value  # session-tracked from get(); no add() needed
             session.commit()
