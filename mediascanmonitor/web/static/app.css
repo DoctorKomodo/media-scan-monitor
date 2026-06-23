@@ -673,7 +673,9 @@ pre code { border: 0; background: none; padding: 0; }
   row-gap: 0.7rem;
 }
 .nf-row .nf-path { grid-area: path; }
-.nf-row > input[name$="-library_id"] { grid-area: lib; }
+.nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.nf-library-id { flex: 1 1 auto; min-width: 0; }
+.nf-library-name { flex: 1 0 100%; }  /* friendly name wraps to its own line under the id */
 .nf-row .folder-on { grid-area: on; }
 .nf-row .nf-remove { grid-area: rm; justify-self: end; }
 .nf-head span:nth-child(1) { text-align: center; } /* "On" header centered over its checkbox */
@@ -836,7 +838,7 @@ pre code { border: 0; background: none; padding: 0; }
   .nf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding: 0.7rem 0; }
   .nf-row input[type="text"] { width: auto; }
   .nf-row input[name$="-path"] { flex: 1 1 100%; }
-  .nf-row input[name$="-library_id"] { flex: 1 1 16rem; }
+  .nf-row .nf-library { flex: 1 1 16rem; }
   .nf-row input[name$="-extensions"] { flex: 1 1 8rem; }
   .nf-row .nf-ext { flex: 1 1 100%; }
   .nf-row .folder-on { margin-left: auto; }
@@ -1051,3 +1053,33 @@ span.fs-crumb-here { color: var(--text); cursor: default; }
 @media (max-width: 680px) {
   .nf-path { flex: 1 1 100%; }
 }
+
+/* Library discovery: the per-row Fetch button + picker option list. Fetch is hidden unless JS
+   is present (.lib-picker-ready) AND the server type supports discovery — so a no-JS page keeps
+   the plain free-text library id with no dead control. Dialog chrome reuses .fs-dialog*. */
+.nf-fetch-lib {
+  flex: 0 0 auto;
+  display: none;
+  font: 600 0.78rem var(--sans);
+  padding: 0.34rem 0.55rem;
+  color: var(--signal); background: transparent;
+  border: 1px solid var(--signal-dim); border-radius: var(--r-sm);
+}
+.nf-fetch-lib:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
+.folder-editor.lib-picker-ready[data-library-discovery="true"] .nf-fetch-lib { display: inline-flex; }
+.nf-library-name { font: 0.78rem/1.4 var(--sans); color: var(--muted); }
+
+.lib-listing { display: flex; flex-direction: column; min-height: 0; }
+.lib-options { list-style: none; margin: 0; padding: 0 0.5rem; overflow: auto; max-height: 46vh; }
+.lib-option {
+  display: flex; align-items: baseline; gap: 0.55rem;
+  width: 100%; padding: 0.5rem 0.45rem;
+  border-bottom: 1px solid var(--line-2); cursor: pointer;
+}
+.lib-options li:last-child .lib-option { border-bottom: 0; }
+.lib-option:hover { background: var(--panel-2); }
+.lib-name { font-weight: 600; }
+.lib-id { font: 0.82rem var(--mono); }
+.lib-empty, .lib-error { font: 0.82rem/1.45 var(--sans); padding: 0.7rem 1rem; margin: 0; }
+.lib-empty { color: var(--muted); }
+.lib-error { color: #f6b9bd; }  /* same as .fs-error */

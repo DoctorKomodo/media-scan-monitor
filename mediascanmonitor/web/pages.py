@@ -108,6 +108,9 @@ def _type_specs() -> dict[str, dict[str, bool]]:
             "requires_secret": spec.requires_secret,
             "requires_base_url": spec.requires_base_url,
             "is_webhook": spec.is_webhook,
+            "supports_library_discovery": registry.get_adapter_class(
+                server_type
+            ).supports_library_discovery,
         }
         for server_type, spec in SERVER_TYPE_SPECS.items()
     }
@@ -199,6 +202,7 @@ async def server_detail(
             # A required token can be replaced but not cleared (clearing 422s in writes.py),
             # so the template only offers "Clear" when the type allows an empty secret.
             "secret_clearable": not SERVER_TYPE_SPECS[server.type].requires_secret,
+            "library_discovery": registry.get_adapter_class(server.type).supports_library_discovery,
         },
     )
 

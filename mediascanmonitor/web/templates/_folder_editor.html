@@ -2,7 +2,11 @@
    detail page (folders=server.folders → a row per existing folder). Rows are index-addressed
    (folder-<i>-*) and parsed by _parse_folder_rows; the whole list is submitted at once. The
    wrapping <form> belongs to each page. Behaviour (add / remove) lives in _folder_rows_script.html. #}
-<div class="folder-editor" data-folder-editor>
+{% set ld = library_discovery | default(false, true) %}
+{% set lib_endpoint = ("/ui/servers/%d/libraries" % server.id) if (server is defined and server) else "/ui/servers/libraries" %}
+<div class="folder-editor" data-folder-editor
+     data-library-discovery="{{ 'true' if ld else 'false' }}"
+     data-library-endpoint="{{ lib_endpoint }}">
   <div class="nf-head" aria-hidden="true">
     <span>On</span><span>Path</span><span>Library</span><span></span>
   </div>
@@ -13,7 +17,13 @@
         <input type="text" name="folder-{{ loop.index0 }}-path" value="{{ f.path }}" placeholder="/data/tv" aria-label="Path">
         <button type="button" class="nf-browse" data-browse>Browse</button>
       </div>
-      <input type="text" name="folder-{{ loop.index0 }}-library_id" value="{{ f.library_id or '' }}" placeholder="—" aria-label="Library id">
+      <div class="nf-library" data-library-field>
+        <input type="text" class="nf-library-id" name="folder-{{ loop.index0 }}-library_id"
+               value="{{ f.library_id or '' }}" placeholder="—" aria-label="Library id">
+        <input type="hidden" name="folder-{{ loop.index0 }}-library_name" value="{{ f.library_name or '' }}">
+        <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
+        {% if f.library_name %}<span class="nf-library-name muted">{{ f.library_name }}</span>{% endif %}
+      </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
         <input type="text" name="folder-{{ loop.index0 }}-extensions" value="{{ f.extensions | join(', ') }}" placeholder="mkv, mp4" aria-label="Extensions">
@@ -27,7 +37,12 @@
         <input type="text" name="folder-0-path" placeholder="/data/tv" aria-label="Path">
         <button type="button" class="nf-browse" data-browse>Browse</button>
       </div>
-      <input type="text" name="folder-0-library_id" placeholder="—" aria-label="Library id">
+      <div class="nf-library" data-library-field>
+        <input type="text" class="nf-library-id" name="folder-0-library_id"
+               placeholder="—" aria-label="Library id">
+        <input type="hidden" name="folder-0-library_name" value="">
+        <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
+      </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
         <input type="text" name="folder-0-extensions" placeholder="mkv, mp4" aria-label="Extensions">
@@ -44,7 +59,12 @@
         <input type="text" name="folder-__I__-path" placeholder="/data/tv" aria-label="Path">
         <button type="button" class="nf-browse" data-browse>Browse</button>
       </div>
-      <input type="text" name="folder-__I__-library_id" placeholder="—" aria-label="Library id">
+      <div class="nf-library" data-library-field>
+        <input type="text" class="nf-library-id" name="folder-__I__-library_id"
+               placeholder="—" aria-label="Library id">
+        <input type="hidden" name="folder-__I__-library_name" value="">
+        <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
+      </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
         <input type="text" name="folder-__I__-extensions" placeholder="mkv, mp4" aria-label="Extensions">
@@ -54,4 +74,5 @@
     </div>
   </template>
   {% include "_folder_picker.html" %}
+  {% include "_library_picker.html" %}
 </div>
