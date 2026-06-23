@@ -23,6 +23,23 @@ from mediascanmonitor.db.schemas import FolderCreate, FolderUpdate, ServerCreate
 from mediascanmonitor.normalize import normalize_extension
 
 
+def _set_server_folders(server: Server, folders: list[FolderCreate]) -> None:
+    """Replace ``server.folders`` with fresh rows built from ``folders``.
+
+    Shared by create_server_with_folders and update_server_with_folders so the two flows
+    persist folders identically (anti-drift). ``clear()`` is the delete-orphan-safe idiom
+    (it also drops the old filetypes); appended rows are always brand-new instances. The
+    schema validators already normalized/deduped each FolderCreate, so they're stored as-is.
+    For a freshly built server ``server.folders`` is empty, so the leading clear() is a no-op.
+    """
+    server.folders.clear()
+    for data in folders:
+        folder = Folder(path=data.path, library_id=data.library_id, enabled=data.enabled)
+        for ext in data.extensions:
+            folder.filetypes.append(FileType(extension=ext))
+        server.folders.append(folder)
+
+
 class Repo:
     def __init__(self, session_factory: Callable[[], Session], box: SecretBox) -> None:
         self._session_factory = session_factory
@@ -98,15 +115,7 @@ class Repo:
                 webhook_headers_json=server_data.webhook_headers_json,
                 webhook_body_template=server_data.webhook_body_template,
             )
-            for folder_data in folders:
-                folder = Folder(
-                    path=folder_data.path,
-                    library_id=folder_data.library_id,
-                    enabled=folder_data.enabled,
-                )
-                for ext in folder_data.extensions:
-                    folder.filetypes.append(FileType(extension=ext))
-                server.folders.append(folder)
+            _set_server_folders(server, folders)
             session.add(server)
             session.commit()
             return server
@@ -122,6 +131,31 @@ class Repo:
                 server.secret_encrypted = self._box.encrypt(secret) if secret is not None else None
             for key, value in fields.items():
                 setattr(server, key, value)
+            session.add(server)
+            session.commit()
+            return server
+
+    def update_server_with_folders(
+        self, server_id: int, data: ServerUpdate, folders: list[FolderCreate]
+    ) -> Server:
+        """Update a server's fields AND replace its whole folder set in ONE transaction.
+
+        Combines update_server's field/secret tri-state with _set_server_folders so the detail
+        page's single "Save changes" persists both atomically (all-or-nothing) and the caller
+        rebuilds once. An empty ``folders`` clears them. Raises KeyError if the server is gone.
+        Mirror of create_server_with_folders.
+        """
+        with self._session_factory() as session:
+            server = session.get(Server, server_id)
+            if server is None:
+                raise KeyError(f"server {server_id} not found")
+            fields = data.model_dump(exclude_unset=True)
+            if "secret" in fields:
+                secret = fields.pop("secret")
+                server.secret_encrypted = self._box.encrypt(secret) if secret is not None else None
+            for key, value in fields.items():
+                setattr(server, key, value)
+            _set_server_folders(server, folders)
             session.add(server)
             session.commit()
             return server
