@@ -4,6 +4,8 @@ Both the JSON ``/api/*`` routes (sub-plan 02) and the HTML ``/ui/*`` routes (sub
 these, so the two surfaces can never drift on the §D token-required check or the §F rebuild. Each
 core does: token-required validation (servers) → off-thread Repo write (asyncio.to_thread, the repo
 is sync SQLModel) → rebuild_engine. Folders carry no secret, so they skip the token check.
+The ``*_with_folders`` create/update pair are parallel twins — change both together so the
+add-server and edit-server flows stay aligned.
 """
 
 import asyncio
@@ -84,6 +86,39 @@ async def apply_server_update(
         resulting_has_secret = existing.secret_encrypted is not None
     _require_secret_or_422(resulting_type, resulting_has_secret)
     server = await asyncio.to_thread(repo.update_server, server_id, data)
+    await rebuild_engine(engine)
+    return server
+
+
+async def apply_server_update_with_folders(
+    repo: Repo,
+    engine: Engine,
+    server_id: int,
+    data: ServerUpdate,
+    folders: list[FolderCreate],
+) -> Server:
+    """Update a server and replace its folder set atomically, then rebuild once.
+
+    The detail page's single "Save changes" persists the server fields and the whole folder
+    list in one request. Same secret-required gate as apply_server_update; a duplicate-name
+    rename raises IntegrityError, translated to a 409 (mirroring apply_server_create_with_folders)
+    so the UI shows an inline error instead of a 500. Folders carry no secret. Twin of
+    apply_server_create_with_folders — keep the two in lockstep.
+    """
+    existing = await asyncio.to_thread(repo.get_server, server_id)
+    if existing is None:
+        raise KeyError(f"server {server_id} not found")
+    dumped = data.model_dump(exclude_unset=True)
+    resulting_type = data.type if data.type is not None else existing.type
+    if "secret" in dumped:
+        resulting_has_secret = bool(dumped["secret"])
+    else:
+        resulting_has_secret = existing.secret_encrypted is not None
+    _require_secret_or_422(resulting_type, resulting_has_secret)
+    try:
+        server = await asyncio.to_thread(repo.update_server_with_folders, server_id, data, folders)
+    except IntegrityError as exc:
+        raise _name_conflict(data.name or existing.name) from exc
     await rebuild_engine(engine)
     return server
 

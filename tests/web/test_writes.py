@@ -12,6 +12,7 @@ from mediascanmonitor.web.writes import (
     apply_server_create,
     apply_server_delete,
     apply_server_update,
+    apply_server_update_with_folders,
 )
 
 
@@ -94,3 +95,51 @@ async def test_update_clearing_secret_to_empty_string_rejected(repo: Repo, engin
     with pytest.raises(HTTPException) as exc:
         await apply_server_update(repo, engine, server.id, ServerUpdate(secret=""))
     assert exc.value.status_code == 422
+
+
+async def test_update_with_folders_persists_fields_and_folders_one_rebuild(
+    repo: Repo, engine: Engine
+) -> None:
+    server = await apply_server_create(
+        repo, engine, ServerCreate(name="hook", type=ServerType.webhook)
+    )
+    assert server.id is not None
+    before = engine.rebuild_calls  # type: ignore[attr-defined]
+    updated = await apply_server_update_with_folders(
+        repo,
+        engine,
+        server.id,
+        ServerUpdate(enabled=False),
+        [FolderCreate(path="/data/tv", extensions=["mkv"])],
+    )
+    assert updated.enabled is False
+    assert {f.path for f in repo.list_folders(server.id)} == {"/data/tv"}
+    assert engine.rebuild_calls == before + 1  # type: ignore[attr-defined]
+
+
+async def test_update_with_folders_secret_gate_enforced(repo: Repo, engine: Engine) -> None:
+    server = await apply_server_create(
+        repo, engine, ServerCreate(name="plex", type=ServerType.plex, secret="tok")
+    )
+    assert server.id is not None
+    with pytest.raises(HTTPException) as exc:
+        await apply_server_update_with_folders(
+            repo, engine, server.id, ServerUpdate(secret=None), []
+        )
+    assert exc.value.status_code == 422
+
+
+async def test_update_with_folders_missing_server_raises_keyerror(
+    repo: Repo, engine: Engine
+) -> None:
+    with pytest.raises(KeyError):
+        await apply_server_update_with_folders(repo, engine, 999, ServerUpdate(), [])
+
+
+async def test_update_with_folders_duplicate_name_raises_409(repo: Repo, engine: Engine) -> None:
+    await apply_server_create(repo, engine, ServerCreate(name="alpha", type=ServerType.webhook))
+    b = await apply_server_create(repo, engine, ServerCreate(name="beta", type=ServerType.webhook))
+    assert b.id is not None
+    with pytest.raises(HTTPException) as exc:
+        await apply_server_update_with_folders(repo, engine, b.id, ServerUpdate(name="alpha"), [])
+    assert exc.value.status_code == 409
