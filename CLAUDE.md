@@ -136,6 +136,18 @@ pytest                    # tests
 
 CI runs all four on every push/PR (`.github/workflows/ci.yml`). Keep it green.
 
+### Run it locally
+
+```bash
+scripts/dev_serve.sh      # uv sync → seed sample servers → `msm run` (web + engine, one loop)
+```
+
+Serves the dashboard + engine at `http://0.0.0.0:8099` (password `dev`), seeded with sample
+servers/folders so the UI has something to show. Override with
+`MSM_PORT=… MSM_PASSWORD=… scripts/dev_serve.sh`. Throwaway state lives in `./dev-data/`
+(gitignored) — delete it to reset. The `scripts/dev_seed.py` helper seeds the sample data; the
+`run-dev-server` skill (`.claude/skills/`) wraps this with the login / Playwright walkthrough.
+
 ### Lint & style conventions (read before pasting code from a plan)
 
 Implementation plans contain hand-written code blocks; treat them as **semantically**

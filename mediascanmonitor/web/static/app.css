@@ -657,10 +657,34 @@ pre code { border: 0; background: none; padding: 0; }
 .nf-intro { margin: 0 0 0.9rem; }
 .nf-head, .nf-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto auto;
+  grid-template-columns: 2.4rem minmax(0, 1fr) minmax(6rem, 11rem) 5rem;
   gap: 0.5rem 0.6rem;
   align-items: center;
 }
+/* Each folder spans two grid rows: path/library/on/remove, then a full-width extensions row.
+   The On/Remove tracks are fixed widths so the header and every row share identical columns
+   (auto tracks would size to each grid's own content and drift out of alignment). */
+.nf-row {
+  grid-template-areas:
+    "on path lib rm"
+    "on ext  ext rm";
+  row-gap: 0.7rem;
+}
+.nf-row .nf-path { grid-area: path; }
+.nf-row > input[name$="-library_id"] { grid-area: lib; }
+.nf-row .folder-on { grid-area: on; }
+.nf-row .nf-remove { grid-area: rm; justify-self: end; }
+.nf-head span:nth-child(1) { text-align: center; } /* "On" header centered over its checkbox */
+/* Extensions own a full-width row: an eyebrow label stacked over a field whose left edge lines
+   up with the path/library inputs above (an inline label would push the field rightward). */
+.nf-row .nf-ext { grid-area: ext; display: flex; flex-direction: column; gap: 0.3rem; }
+.nf-ext-label {
+  font: 600 0.64rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+.nf-row .nf-ext .ext-field { width: 100%; }
 .nf-head {
   padding: 0 0 0.45rem;
   font: 600 0.64rem var(--mono);
@@ -688,6 +712,123 @@ pre code { border: 0; background: none; padding: 0; }
 }
 .add-row-btn:hover { border-color: var(--signal-dim); background: rgba(63, 216, 228, 0.05); }
 
+/* Extension chip editor — JS enhances the comma-text field (.ext-backing, hidden) into a
+   chip list with a presets popover. The coverage dot fills to show how much of each set is
+   already watched. Tokens only; no new palette. See _folder_rows_script.html. */
+.ext-backing { display: none !important; }
+.ext-field {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.32rem;
+  min-height: 2.15rem;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: text;
+}
+.ext-field:focus-within { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(63, 216, 228, 0.18); }
+.ext-chips { display: contents; }
+.ext-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font: 0.74rem/1 var(--mono);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.25rem 0.2rem 0.55rem;
+}
+.ext-chip button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ext-chip button:hover { background: rgba(242, 109, 116, 0.16); color: var(--err); }
+.ext-chip button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+.ext-type {
+  flex: 1 1 4rem;
+  min-width: 4rem !important;
+  margin: 0 !important;
+  padding: 0.18rem 0.25rem !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font: 0.78rem/1 var(--mono);
+}
+.ext-type:focus { outline: none; box-shadow: none !important; }
+.ext-presets-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.2rem 0.55rem;
+  font: 600 0.64rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--signal);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.ext-presets-btn:hover { border-color: var(--signal-dim); background: rgba(63, 216, 228, 0.06); }
+.ext-pop {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 30;
+  min-width: 13rem;
+  padding: 0.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+}
+.ext-pop[hidden] { display: none; }
+.ext-pop-lede { margin: 0 0 0.45rem; padding: 0 0.4rem; font: 0.66rem/1.3 var(--sans); color: var(--muted); }
+.ext-preset {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.36rem 0.4rem;
+  border-radius: var(--r-sm);
+  font: 0.8rem/1 var(--sans);
+  color: var(--text);
+  cursor: pointer;
+}
+.ext-preset + .ext-preset { margin-top: 0.1rem; }
+.ext-preset:hover { background: var(--panel-2); }
+.ext-preset:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.ext-preset-name { flex: 1 1 auto; font-weight: 600; text-transform: capitalize; }
+.ext-preset-count { font: 0.66rem/1 var(--mono); color: var(--faint); }
+.ext-dot {
+  flex: 0 0 auto;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: conic-gradient(var(--signal) calc(var(--cov, 0) * 1%), transparent 0);
+}
+.ext-preset[data-cov="partial"] .ext-dot { border-color: var(--signal-dim); }
+.ext-preset[data-cov="full"] { color: var(--signal); }
+.ext-preset[data-cov="full"] .ext-dot { border-color: var(--signal); }
+.ext-preset[data-cov="full"] .ext-preset-count { color: var(--signal-dim); }
+@media (prefers-reduced-motion: no-preference) {
+  .ext-dot { transition: --cov 0.18s ease; }
+}
+
 @media (max-width: 680px) {
   .nf-head { display: none; }
   .nf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding: 0.7rem 0; }
@@ -695,6 +836,7 @@ pre code { border: 0; background: none; padding: 0; }
   .nf-row input[name$="-path"] { flex: 1 1 100%; }
   .nf-row input[name$="-library_id"] { flex: 1 1 5rem; }
   .nf-row input[name$="-extensions"] { flex: 1 1 8rem; }
+  .nf-row .nf-ext { flex: 1 1 100%; }
   .nf-row .folder-on { margin-left: auto; }
 }
 

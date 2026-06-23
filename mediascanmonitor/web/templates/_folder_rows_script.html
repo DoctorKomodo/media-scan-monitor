@@ -89,3 +89,202 @@
     });
   })();
 </script>
+<script>
+  // Extension chip editor: progressive enhancement of each folder row's comma-separated
+  // "extensions" text field. The original input stays in the DOM (hidden) as the submitted
+  // value carrier, kept in sync on every change — with no JS it remains a plain comma field
+  // and the server parses it exactly as before. Presets come from the Jinja global
+  // `extension_presets` (config.defaults.EXTENSION_PRESETS); the popover's coverage dot fills
+  // to show how much of each set the folder already watches. Rows cloned by the add-row
+  // handler above are enhanced via a MutationObserver, so this stays decoupled from it.
+  (function () {
+    // Passed as ordered [name, exts] pairs: Jinja's tojson sorts dict keys (sort_keys=True),
+    // which would alphabetize the sets — we want config.defaults' deliberate order (video first).
+    const PRESETS = Object.fromEntries({{ extension_presets.items() | list | tojson }});
+    const norm = (s) => s.trim().replace(/^\.+/, "").trim().toLowerCase();
+    const parse = (v) => {
+      const out = [];
+      for (const part of v.split(/[,\s]+/)) {
+        const n = norm(part);
+        if (n && !out.includes(n)) out.push(n);
+      }
+      return out;
+    };
+
+    function enhance(editor) {
+      if (editor.dataset.extReady) return;
+      const input = editor.querySelector('input[name$="-extensions"]');
+      if (!input) return;
+      editor.dataset.extReady = "1";
+      input.classList.add("ext-backing");
+      input.setAttribute("tabindex", "-1");
+      input.setAttribute("aria-hidden", "true");
+
+      let exts = parse(input.value);
+
+      const field = document.createElement("div");
+      field.className = "ext-field";
+      const chips = document.createElement("span");
+      chips.className = "ext-chips";
+      const type = document.createElement("input");
+      type.type = "text";
+      type.className = "ext-type";
+      type.setAttribute("aria-label", "Add extension");
+      const presetsBtn = document.createElement("button");
+      presetsBtn.type = "button";
+      presetsBtn.className = "ext-presets-btn";
+      presetsBtn.textContent = "presets ▾";
+      presetsBtn.setAttribute("aria-expanded", "false");
+      const pop = document.createElement("div");
+      pop.className = "ext-pop";
+      pop.hidden = true;
+
+      const lede = document.createElement("p");
+      lede.className = "ext-pop-lede";
+      lede.textContent = "Apply a set — toggle to add or clear.";
+      pop.appendChild(lede);
+      const presetEls = {};
+      for (const name of Object.keys(PRESETS)) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "ext-preset";
+        b.dataset.preset = name;
+        const dot = document.createElement("span");
+        dot.className = "ext-dot";
+        const nm = document.createElement("span");
+        nm.className = "ext-preset-name";
+        nm.textContent = name;
+        const cnt = document.createElement("span");
+        cnt.className = "ext-preset-count";
+        b.append(dot, nm, cnt);
+        pop.appendChild(b);
+        presetEls[name] = { dot, cnt, btn: b };
+      }
+
+      field.append(chips, type, presetsBtn, pop);
+      input.after(field);
+
+      const sync = () => { input.value = exts.join(", "); };
+      function renderChips() {
+        chips.textContent = "";
+        for (const ext of exts) {
+          const chip = document.createElement("span");
+          chip.className = "ext-chip";
+          chip.append(document.createTextNode(ext));
+          const x = document.createElement("button");
+          x.type = "button";
+          x.textContent = "×";
+          x.dataset.rm = ext;
+          x.setAttribute("aria-label", "Remove " + ext);
+          chip.appendChild(x);
+          chips.appendChild(chip);
+        }
+        type.placeholder = exts.length ? "add…" : "mkv, mp4";
+      }
+      function renderPresets() {
+        for (const name of Object.keys(PRESETS)) {
+          const set = PRESETS[name];
+          const present = set.filter((e) => exts.includes(e)).length;
+          const cov = present === 0 ? "none" : present === set.length ? "full" : "partial";
+          const { dot, cnt, btn } = presetEls[name];
+          btn.dataset.cov = cov;
+          btn.setAttribute("aria-pressed", cov === "full" ? "true" : "false");
+          dot.style.setProperty("--cov", String(Math.round((present / set.length) * 100)));
+          cnt.textContent = cov === "full" ? String(set.length) : present + "/" + set.length;
+        }
+      }
+      const render = () => { renderChips(); renderPresets(); sync(); };
+
+      function add(raw) {
+        const n = norm(raw);
+        if (n && !exts.includes(n)) { exts.push(n); render(); }
+      }
+      function remove(ext) { exts = exts.filter((e) => e !== ext); render(); }
+      function togglePreset(name) {
+        const set = PRESETS[name];
+        if (set.every((e) => exts.includes(e))) exts = exts.filter((e) => !set.includes(e));
+        else for (const e of set) if (!exts.includes(e)) exts.push(e);
+        render();
+      }
+      const closePop = () => {
+        pop.hidden = true;
+        presetsBtn.setAttribute("aria-expanded", "false");
+      };
+
+      // Remove-last-row resets a row's inputs in place (handler above); re-read so the chips
+      // reflect the now-blank backing value instead of going stale.
+      editor._extSync = () => {
+        const fromInput = parse(input.value);
+        if (fromInput.join(",") !== exts.join(",")) { exts = fromInput; render(); }
+      };
+
+      field.addEventListener("mousedown", (event) => {
+        if (event.target === field || event.target === chips) { event.preventDefault(); type.focus(); }
+      });
+      chips.addEventListener("click", (event) => {
+        const rm = event.target.closest("[data-rm]");
+        if (rm) remove(rm.dataset.rm);
+      });
+      type.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === "," || (event.key === " " && type.value.trim())) {
+          event.preventDefault();
+          add(type.value);
+          type.value = "";
+        } else if (event.key === "Backspace" && !type.value && exts.length) {
+          remove(exts[exts.length - 1]);
+        }
+      });
+      type.addEventListener("input", () => {
+        if (/[,\s]/.test(type.value)) {
+          const parts = type.value.split(/[,\s]+/);
+          type.value = parts.pop();
+          for (const p of parts) add(p);
+        }
+      });
+      type.addEventListener("blur", () => {
+        if (type.value.trim()) { add(type.value); type.value = ""; }
+      });
+      presetsBtn.addEventListener("click", () => {
+        const opening = pop.hidden;
+        pop.hidden = !opening;
+        presetsBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+      });
+      pop.addEventListener("click", (event) => {
+        const b = event.target.closest("[data-preset]");
+        if (b) togglePreset(b.dataset.preset);
+      });
+      field.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !pop.hidden) { closePop(); presetsBtn.focus(); }
+      });
+      document.addEventListener("click", (event) => {
+        if (!pop.hidden && !field.contains(event.target)) closePop();
+      });
+
+      render();
+    }
+
+    for (const editor of document.querySelectorAll("[data-ext-editor]")) enhance(editor);
+
+    for (const rows of document.querySelectorAll("[data-folder-rows]")) {
+      new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType !== 1) continue;
+            if (node.matches("[data-ext-editor]")) enhance(node);
+            node.querySelectorAll("[data-ext-editor]").forEach(enhance);
+          }
+        }
+      }).observe(rows, { childList: true });
+
+      // After a row removal clears inputs in place, re-sync each chip editor (see _extSync).
+      rows.addEventListener("click", (event) => {
+        if (!event.target.closest("[data-folder-remove]")) return;
+        queueMicrotask(() => {
+          for (const editor of rows.querySelectorAll("[data-ext-editor]")) {
+            if (editor._extSync) editor._extSync();
+          }
+        });
+      });
+    }
+  })();
+</script>
