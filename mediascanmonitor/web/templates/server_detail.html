@@ -34,14 +34,6 @@
       <span id="save-status" class="form-status"></span>
     </div>
   </form>
-
-  <div class="danger-zone">
-    <p>Delete this server and all of its folders. This can't be undone.</p>
-    <form hx-post="/ui/servers/{{ server.id }}/delete" hx-target="body" hx-swap="innerHTML"
-          hx-confirm="Delete this server and all its folders?">
-      <button type="submit" class="ghost-danger">Delete server</button>
-    </form>
-  </div>
 </section>
 
 <script>
