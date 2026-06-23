@@ -38,16 +38,39 @@ class TestResult:
     detail: str
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryOption:
+    """One selectable backend library: an opaque id plus a human label."""
+
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryListResult:
+    """Outcome of a list_libraries() probe — mirrors TestResult's ok/detail shape."""
+
+    __test__ = False  # not a pytest class despite living beside Test* names
+
+    ok: bool
+    detail: str
+    libraries: tuple[LibraryOption, ...] = ()
+
+
 class ServerAdapter(ABC):
     """Base class for every notification target.
 
-    Subclasses MUST set the two ClassVars and implement the two async methods.
+    Subclasses MUST set ``server_type`` + ``supported_scan_modes`` and implement
+    ``trigger()`` + ``test()``. ``list_libraries()`` is optional — override it and
+    set ``supports_library_discovery = True`` to enable the UI's library picker
+    (default: unsupported).
     They receive an immutable ``ServerRuntime`` (decrypted secret in memory) and a
     shared ``httpx.AsyncClient`` owned by the engine.
     """
 
     server_type: ClassVar[ServerType]
     supported_scan_modes: ClassVar[frozenset[ScanMode]]
+    supports_library_discovery: ClassVar[bool] = False
 
     def __init__(self, server: ServerRuntime, client: httpx.AsyncClient) -> None:
         self.server = server
@@ -60,3 +83,7 @@ class ServerAdapter(ABC):
     @abstractmethod
     async def test(self) -> TestResult:
         """Probe auth + reachability only (no scan)."""
+
+    async def list_libraries(self) -> LibraryListResult:
+        """List selectable libraries (id + name). Default: the backend has no concept of one."""
+        return LibraryListResult(ok=False, detail="not supported")
