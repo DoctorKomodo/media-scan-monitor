@@ -251,6 +251,7 @@ def test_ui_update_saves_fields_and_folders_together(
         },
     )
     assert resp.status_code == 200
+    assert "saved" in resp.text.lower()  # _saved.html rendered into #save-status
     assert engine.rebuild_calls == before + 1  # one rebuild for the whole save
     saved = repo.get_server(sid)
     assert saved.name == "Plex Renamed"
