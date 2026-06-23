@@ -154,45 +154,6 @@ def test_ui_delete_server_swaps_list_and_rebuilds(
     assert repo.get_server(sid) is None
 
 
-def test_ui_sync_folders_replaces_whole_set(
-    auth_client: httpx.Client,
-    repo,
-    engine,  # type: ignore[no-untyped-def]
-) -> None:
-    sid = _seed_plex(repo)
-    repo.create_folder(sid, FolderCreate(path="/old", extensions=["mkv"]))  # will be dropped
-    before = engine.rebuild_calls
-    # The detail editor saves the WHOLE list at once: /old is omitted (deleted), two rows added,
-    # a blank row skipped. One rebuild for the wholesale replace.
-    resp = auth_client.post(
-        f"/ui/servers/{sid}/folders",
-        data={
-            "folder-0-path": "/data/tv",
-            "folder-0-library_id": "2",
-            "folder-0-extensions": "mkv, mp4",
-            "folder-0-enabled": "on",
-            "folder-1-path": "",  # skipped
-            "folder-2-path": "/data/movies",
-            "folder-2-extensions": "mkv",
-        },
-    )
-    assert resp.status_code == 200
-    assert "saved" in resp.text.lower()
-    assert engine.rebuild_calls == before + 1
-    assert {f.path for f in repo.list_folders(sid)} == {"/data/tv", "/data/movies"}  # /old gone
-
-
-def test_ui_sync_folders_empty_clears_all(
-    auth_client: httpx.Client,
-    repo,  # type: ignore[no-untyped-def]
-) -> None:
-    sid = _seed_plex(repo)
-    repo.create_folder(sid, FolderCreate(path="/data/tv", extensions=["mkv"]))
-    resp = auth_client.post(f"/ui/servers/{sid}/folders", data={"folder-0-path": ""})
-    assert resp.status_code == 200
-    assert repo.list_folders(sid) == []  # an all-blank save is a valid "no folders"
-
-
 def test_ui_update_persists_webhook_fields(
     auth_client: httpx.Client,
     repo,
@@ -257,15 +218,6 @@ def test_ui_delete_server_nonexistent_returns_200(
     """Deleting a non-existent server returns 200 (not 500) — idempotent delete."""
     resp = auth_client.post("/ui/servers/9999/delete")
     assert resp.status_code == 200
-
-
-def test_ui_sync_folders_missing_server_returns_200_inline_error(
-    auth_client: httpx.Client,
-) -> None:
-    """Saving folders for a server that's gone returns 200 (not 500) with inline error."""
-    resp = auth_client.post("/ui/servers/9999/folders", data={"folder-0-path": "/data/tv"})
-    assert resp.status_code == 200
-    assert resp.headers.get("hx-retarget") == "#folder-error"
 
 
 def test_ui_update_saves_fields_and_folders_together(

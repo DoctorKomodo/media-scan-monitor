@@ -185,29 +185,6 @@ class Repo:
             session.commit()
             return folder
 
-    def replace_folders(self, server_id: int, folders: list[FolderCreate]) -> None:
-        """Replace ALL of a server's folders with ``folders``, in ONE transaction.
-
-        The detail page edits the whole folder list and saves it wholesale (the same model as
-        the new-server form): edited, added, and removed rows are reconciled by clearing the
-        current folders (delete-orphan also drops their filetypes) and recreating from the
-        submitted set. An empty list clears them. Raises KeyError if the server is gone.
-        Folders carry no state beyond what the form captures, so the rebuild loses nothing.
-        """
-        with self._session_factory() as session:
-            server = session.get(Server, server_id)
-            if server is None:
-                raise KeyError(f"server {server_id} not found")
-            # clear() is the safe delete-orphan idiom (see update_folder); the rows appended
-            # below are brand-new instances, never the cleared ones.
-            server.folders.clear()
-            for data in folders:
-                folder = Folder(path=data.path, library_id=data.library_id, enabled=data.enabled)
-                for ext in data.extensions:
-                    folder.filetypes.append(FileType(extension=ext))
-                server.folders.append(folder)
-            session.commit()
-
     def list_folders(self, server_id: int) -> list[Folder]:
         with self._session_factory() as session:
             statement = select(Folder).where(col(Folder.server_id) == server_id)

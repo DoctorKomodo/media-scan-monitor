@@ -143,18 +143,6 @@ async def apply_folder_create(
     return folder
 
 
-async def apply_folders_sync(
-    repo: Repo, engine: Engine, server_id: int, folders: list[FolderCreate]
-) -> None:
-    """Replace a server's whole folder set with ``folders``, then rebuild once.
-
-    The detail page's single folder editor saves the entire list at once (edit / add / remove
-    all reconciled by the wholesale replace). An empty list is a valid "no folders" save.
-    """
-    await asyncio.to_thread(repo.replace_folders, server_id, folders)
-    await rebuild_engine(engine)
-
-
 async def apply_folder_update(
     repo: Repo, engine: Engine, folder_id: int, data: FolderUpdate
 ) -> Folder:

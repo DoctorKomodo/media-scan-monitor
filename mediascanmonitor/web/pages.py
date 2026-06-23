@@ -53,7 +53,6 @@ from mediascanmonitor.web.servertest import (
     runtime_from_server,
 )
 from mediascanmonitor.web.writes import (
-    apply_folders_sync,
     apply_server_create_with_folders,
     apply_server_delete,
     apply_server_update_with_folders,
@@ -521,29 +520,6 @@ async def ui_delete_server(
         detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         return _error_partial(request, templates, detail, "#edit-error")
     return await _servers_list_response(request, repo, templates)
-
-
-@router.post("/ui/servers/{server_id}/folders")
-async def ui_sync_folders(
-    request: Request,
-    server_id: int,
-    repo: Repo = Depends(get_repo),
-    engine: Engine = Depends(get_engine),
-    templates: Jinja2Templates = Depends(get_templates),
-) -> Response:
-    # The detail page edits the whole folder list in one editor and saves it wholesale (same
-    # model as the new-server form): parse every folder-<i>-* row and replace the server's set.
-    # KeyError = server deleted concurrently → inline error, not a 500 (mirrors the /api twin).
-    form = await request.form()
-    try:
-        folders = _parse_folder_rows(form)
-        await apply_folders_sync(repo, engine, server_id, folders)
-    except (HTTPException, ValueError, KeyError) as exc:
-        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
-        return _error_partial(request, templates, detail, "#folder-error")
-    return templates.TemplateResponse(
-        request=request, name="_saved.html", context={"message": "Folders saved."}
-    )
 
 
 _INOTIFY_GATE_VALUES = frozenset({"enforce", "off"})
