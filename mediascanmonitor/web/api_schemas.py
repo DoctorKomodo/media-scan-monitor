@@ -22,6 +22,7 @@ class FolderRead(BaseModel):
     server_id: int
     path: str
     library_id: str | None
+    library_name: str | None
     enabled: bool
     extensions: list[str]  # sorted normalized extensions
 
@@ -33,6 +34,7 @@ class FolderRead(BaseModel):
             server_id=folder.server_id,
             path=folder.path,
             library_id=folder.library_id,
+            library_name=folder.library_name,
             enabled=folder.enabled,
             extensions=sorted(ft.extension for ft in folder.filetypes),
         )
