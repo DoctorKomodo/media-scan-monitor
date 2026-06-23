@@ -52,34 +52,40 @@ def test_create_server_with_folders_persists_both(repo: Repo) -> None:
     assert sorted(ft.extension for ft in tv.filetypes) == ["mkv", "mp4"]  # normalized + deduped
 
 
-def test_replace_folders_swaps_whole_set(repo: Repo) -> None:
-    server = repo.create_server(make_server(name="batch"))
+def test_update_server_with_folders_changes_fields_and_swaps_folders(repo: Repo) -> None:
+    server = repo.create_server_with_folders(
+        make_server(name="combo"), [FolderCreate(path="/old", extensions=["avi"])]
+    )
     assert server.id is not None
-    repo.create_folder(server.id, FolderCreate(path="/old", extensions=["avi"]))
-    repo.replace_folders(
+    updated = repo.update_server_with_folders(
         server.id,
+        ServerUpdate(enabled=False),
         [
             FolderCreate(path="/data/tv", extensions=["mkv", "MP4"]),
             FolderCreate(path="/data/movies", extensions=["mkv"]),
         ],
     )
+    assert updated.enabled is False
     folders = repo.list_folders(server.id)
     assert {f.path for f in folders} == {"/data/tv", "/data/movies"}  # /old replaced wholesale
     tv = next(f for f in folders if f.path == "/data/tv")
-    assert sorted(ft.extension for ft in tv.filetypes) == ["mkv", "mp4"]
+    assert sorted(ft.extension for ft in tv.filetypes) == ["mkv", "mp4"]  # normalized + deduped
 
 
-def test_replace_folders_empty_clears_all(repo: Repo) -> None:
-    server = repo.create_server(make_server(name="clearme"))
+def test_update_server_with_folders_empty_clears_all(repo: Repo) -> None:
+    server = repo.create_server_with_folders(
+        make_server(name="clearfolders"), [FolderCreate(path="/x", extensions=["mkv"])]
+    )
     assert server.id is not None
-    repo.create_folder(server.id, FolderCreate(path="/x", extensions=["mkv"]))
-    repo.replace_folders(server.id, [])
+    repo.update_server_with_folders(server.id, ServerUpdate(), [])
     assert repo.list_folders(server.id) == []
 
 
-def test_replace_folders_unknown_server_raises(repo: Repo) -> None:
+def test_update_server_with_folders_unknown_server_raises(repo: Repo) -> None:
     with pytest.raises(KeyError):
-        repo.replace_folders(9999, [FolderCreate(path="/data/tv", extensions=["mkv"])])
+        repo.update_server_with_folders(
+            9999, ServerUpdate(), [FolderCreate(path="/data/tv", extensions=["mkv"])]
+        )
 
 
 def test_create_server_with_folders_is_atomic_on_duplicate_name(repo: Repo) -> None:

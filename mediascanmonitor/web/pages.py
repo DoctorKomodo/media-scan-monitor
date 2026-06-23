@@ -53,10 +53,9 @@ from mediascanmonitor.web.servertest import (
     runtime_from_server,
 )
 from mediascanmonitor.web.writes import (
-    apply_folders_sync,
     apply_server_create_with_folders,
     apply_server_delete,
-    apply_server_update,
+    apply_server_update_with_folders,
 )
 
 router = APIRouter(dependencies=[Depends(require_page_auth)])
@@ -470,13 +469,12 @@ async def ui_update_server(
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    # Build the schema INSIDE the try: enum/validator failures → ValueError → inline error, not 500.
-    # apply_server_update raises KeyError if the server was deleted concurrently — render the
-    # error partial rather than 500 (mirrors the /api twin translating KeyError → 404).
+    # Build the schema INSIDE the try: enum/validator failures -> ValueError -> inline error.
+    # The folder editor now lives in the SAME form (combined save), so parse its rows here and
+    # persist settings + folders atomically. apply_server_update_with_folders raises KeyError if
+    # the server was deleted concurrently, HTTPException 422 (secret gate) / 409 (duplicate name).
+    form = await request.form()
     try:
-        # Secret tri-state via exclude_unset: omit when blank (keep), set None when "clear" ticked.
-        # Webhook fields ride along too (the shared form renders them only for webhook servers),
-        # so editing a webhook's method/headers/body now persists like every other field.
         fields: dict[str, Any] = {
             "name": name,
             "base_url": base_url,
@@ -491,16 +489,19 @@ async def ui_update_server(
             "webhook_headers_json": webhook_headers_json or None,
             "webhook_body_template": webhook_body_template or None,
         }
+        # Secret tri-state: leave "secret" out of fields to keep the stored token, or set None to
+        # clear it; the write-core's exclude_unset dump reads absent=keep, explicit None=clear.
         if clear_secret:
             fields["secret"] = None
         elif secret:
             fields["secret"] = secret
         data = ServerUpdate(**fields)
-        await apply_server_update(repo, engine, server_id, data)
+        folders = _parse_folder_rows(form)
+        await apply_server_update_with_folders(repo, engine, server_id, data, folders)
     except HTTPException as exc:
-        return _error_partial(request, templates, str(exc.detail), "#edit-error")
+        return _error_partial(request, templates, str(exc.detail), "#save-error")
     except (ValueError, KeyError) as exc:
-        return _error_partial(request, templates, str(exc), "#edit-error")
+        return _error_partial(request, templates, str(exc), "#save-error")
     return templates.TemplateResponse(
         request=request, name="_saved.html", context={"message": "Saved."}
     )
@@ -520,29 +521,6 @@ async def ui_delete_server(
         detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         return _error_partial(request, templates, detail, "#edit-error")
     return await _servers_list_response(request, repo, templates)
-
-
-@router.post("/ui/servers/{server_id}/folders")
-async def ui_sync_folders(
-    request: Request,
-    server_id: int,
-    repo: Repo = Depends(get_repo),
-    engine: Engine = Depends(get_engine),
-    templates: Jinja2Templates = Depends(get_templates),
-) -> Response:
-    # The detail page edits the whole folder list in one editor and saves it wholesale (same
-    # model as the new-server form): parse every folder-<i>-* row and replace the server's set.
-    # KeyError = server deleted concurrently → inline error, not a 500 (mirrors the /api twin).
-    form = await request.form()
-    try:
-        folders = _parse_folder_rows(form)
-        await apply_folders_sync(repo, engine, server_id, folders)
-    except (HTTPException, ValueError, KeyError) as exc:
-        detail = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
-        return _error_partial(request, templates, detail, "#folder-error")
-    return templates.TemplateResponse(
-        request=request, name="_saved.html", context={"message": "Folders saved."}
-    )
 
 
 _INOTIFY_GATE_VALUES = frozenset({"enforce", "off"})
