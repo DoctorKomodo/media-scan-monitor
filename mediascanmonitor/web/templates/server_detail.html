@@ -17,14 +17,21 @@
 </section>
 
 <section class="card">
-  <h2>Edit</h2>
-  <div id="edit-error"></div>
+  <div id="save-error"></div>
   <form class="settings-form" hx-post="/ui/servers/{{ server.id }}/update"
-        hx-target="#edit-result" hx-swap="innerHTML">
+        hx-target="#save-status" hx-swap="innerHTML">
     {% include "_server_form_fields.html" %}
+
+    <fieldset class="form-section">
+      <legend>Folders</legend>
+      <p class="field-hint nf-intro">Each folder declares a host path to watch and which file
+        types count. Leave a row blank to skip it. Saved together with the settings above.</p>
+      {% with folders = server.folders %}{% include "_folder_editor.html" %}{% endwith %}
+    </fieldset>
+
     <div class="form-actions">
       <button type="submit">Save changes</button>
-      <span id="edit-result" class="form-status"></span>
+      <span id="save-status" class="form-status"></span>
     </div>
   </form>
 
@@ -35,20 +42,6 @@
       <button type="submit" class="ghost-danger">Delete server</button>
     </form>
   </div>
-</section>
-
-<section class="card">
-  <h2>Folders</h2>
-  <p class="field-hint nf-intro">Edit the whole list and save — add or remove rows, then
-    <strong>Save folders</strong> applies exactly what's shown.</p>
-  <div id="folder-error"></div>
-  <form hx-post="/ui/servers/{{ server.id }}/folders" hx-target="#folder-status" hx-swap="innerHTML">
-    {% with folders = server.folders %}{% include "_folder_editor.html" %}{% endwith %}
-    <div class="form-actions">
-      <button type="submit">Save folders</button>
-      <span id="folder-status" class="form-status"></span>
-    </div>
-  </form>
 </section>
 
 <script>

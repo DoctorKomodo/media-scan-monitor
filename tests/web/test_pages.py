@@ -76,11 +76,14 @@ def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, 
     resp = auth_client.get(f"/servers/{sid}")
     assert resp.status_code == 200
     assert "Test" in resp.text  # Test button present
-    # The existing folder is pre-loaded into the unified editor as an editable row, and the
-    # whole list saves to one sync endpoint (no per-row update/delete forms anymore).
+    # The existing folder is pre-loaded into the unified editor, and settings + folders now
+    # save together via ONE form posting to /update (no separate "Save folders" form).
     assert 'value="/data/tv"' in resp.text
     assert "data-folder-editor" in resp.text
-    assert f"/ui/servers/{sid}/folders" in resp.text
+    assert f"/ui/servers/{sid}/update" in resp.text  # the one consolidated save form
+    assert f"/ui/servers/{sid}/folders" not in resp.text  # separate folder-sync form is gone
+    assert "Save changes" in resp.text
+    assert "Delete server" in resp.text
 
 
 def test_server_detail_404_for_missing(auth_client: httpx.Client) -> None:

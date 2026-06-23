@@ -266,3 +266,107 @@ def test_ui_sync_folders_missing_server_returns_200_inline_error(
     resp = auth_client.post("/ui/servers/9999/folders", data={"folder-0-path": "/data/tv"})
     assert resp.status_code == 200
     assert resp.headers.get("hx-retarget") == "#folder-error"
+
+
+def test_ui_update_saves_fields_and_folders_together(
+    auth_client: httpx.Client,
+    repo,
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    sid = _seed_plex(repo)
+    repo.create_folder(sid, FolderCreate(path="/old", extensions=["mkv"]))  # replaced wholesale
+    before = engine.rebuild_calls
+    resp = auth_client.post(
+        f"/ui/servers/{sid}/update",
+        data={
+            "name": "Plex Renamed",
+            "base_url": "http://plex:32400",
+            "secret": "",  # blank keeps the stored token
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+            "verify_tls": "on",
+            "enabled": "on",
+            "folder-0-path": "/data/tv",
+            "folder-0-library_id": "2",
+            "folder-0-extensions": "mkv, mp4",
+            "folder-0-enabled": "on",
+            "folder-1-path": "",  # blank row skipped
+            "folder-2-path": "/data/movies",
+            "folder-2-extensions": "mkv",
+        },
+    )
+    assert resp.status_code == 200
+    assert engine.rebuild_calls == before + 1  # one rebuild for the whole save
+    saved = repo.get_server(sid)
+    assert saved.name == "Plex Renamed"
+    assert saved.secret_encrypted is not None  # blank secret left the token intact
+    assert {f.path for f in repo.list_folders(sid)} == {"/data/tv", "/data/movies"}  # /old gone
+
+
+def test_ui_update_empty_folder_rows_clears_all(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+) -> None:
+    sid = _seed_plex(repo)
+    repo.create_folder(sid, FolderCreate(path="/data/tv", extensions=["mkv"]))
+    resp = auth_client.post(
+        f"/ui/servers/{sid}/update",
+        data={
+            "name": "Plex",
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+            "folder-0-path": "",  # all blank → no folders
+        },
+    )
+    assert resp.status_code == 200
+    assert repo.list_folders(sid) == []  # an all-blank save is a valid "no folders"
+
+
+def test_ui_update_missing_server_returns_200_inline_error(
+    auth_client: httpx.Client,
+) -> None:
+    resp = auth_client.post(
+        "/ui/servers/9999/update",
+        data={
+            "name": "ghost",
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+            "folder-0-path": "/data/tv",
+        },
+    )
+    assert resp.status_code == 200  # softened so htmx swaps the message
+    assert resp.headers.get("hx-retarget") == "#save-error"
+
+
+def test_ui_update_duplicate_name_returns_inline_409(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+) -> None:
+    _seed_plex(repo)  # name "Plex"
+    other = repo.create_server(ServerCreate(name="Other", type=ServerType.webhook))
+    oid = int(other.id)
+    resp = auth_client.post(
+        f"/ui/servers/{oid}/update",
+        data={
+            "name": "Plex",  # collides with the seeded server
+            "scan_mode": "library",
+            "debounce_mode": "off",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "1",
+            "timeout_seconds": "10",
+            "webhook_method": "POST",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("hx-retarget") == "#save-error"
+    assert "already exists" in resp.text.lower()
+    assert repo.get_server(oid).name == "Other"  # nothing persisted (rolled back)

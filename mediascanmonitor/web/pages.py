@@ -56,7 +56,7 @@ from mediascanmonitor.web.writes import (
     apply_folders_sync,
     apply_server_create_with_folders,
     apply_server_delete,
-    apply_server_update,
+    apply_server_update_with_folders,
 )
 
 router = APIRouter(dependencies=[Depends(require_page_auth)])
@@ -470,13 +470,13 @@ async def ui_update_server(
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    # Build the schema INSIDE the try: enum/validator failures → ValueError → inline error, not 500.
-    # apply_server_update raises KeyError if the server was deleted concurrently — render the
-    # error partial rather than 500 (mirrors the /api twin translating KeyError → 404).
+    # Build the schema INSIDE the try: enum/validator failures -> ValueError -> inline error.
+    # The folder editor now lives in the SAME form (combined save), so parse its rows here and
+    # persist settings + folders atomically. apply_server_update_with_folders raises KeyError if
+    # the server was deleted concurrently, HTTPException 422 (secret gate) / 409 (duplicate name).
+    form = await request.form()
     try:
         # Secret tri-state via exclude_unset: omit when blank (keep), set None when "clear" ticked.
-        # Webhook fields ride along too (the shared form renders them only for webhook servers),
-        # so editing a webhook's method/headers/body now persists like every other field.
         fields: dict[str, Any] = {
             "name": name,
             "base_url": base_url,
@@ -496,11 +496,12 @@ async def ui_update_server(
         elif secret:
             fields["secret"] = secret
         data = ServerUpdate(**fields)
-        await apply_server_update(repo, engine, server_id, data)
+        folders = _parse_folder_rows(form)
+        await apply_server_update_with_folders(repo, engine, server_id, data, folders)
     except HTTPException as exc:
-        return _error_partial(request, templates, str(exc.detail), "#edit-error")
+        return _error_partial(request, templates, str(exc.detail), "#save-error")
     except (ValueError, KeyError) as exc:
-        return _error_partial(request, templates, str(exc), "#edit-error")
+        return _error_partial(request, templates, str(exc), "#save-error")
     return templates.TemplateResponse(
         request=request, name="_saved.html", context={"message": "Saved."}
     )
