@@ -4,6 +4,7 @@ Both the JSON ``/api/*`` routes (sub-plan 02) and the HTML ``/ui/*`` routes (sub
 these, so the two surfaces can never drift on the §D token-required check or the §F rebuild. Each
 core does: token-required validation (servers) → off-thread Repo write (asyncio.to_thread, the repo
 is sync SQLModel) → rebuild_engine. Folders carry no secret, so they skip the token check.
+
 The ``*_with_folders`` create/update pair are parallel twins — change both together so the
 add-server and edit-server flows stay aligned.
 """
@@ -42,6 +43,22 @@ def _name_conflict(name: str) -> HTTPException:
     )
 
 
+def _require_update_secret(data: ServerUpdate, existing: Server) -> None:
+    """Secret-required (§D) gate for an update — shared by both update cores so they can't drift.
+
+    The resulting type/secret derive from the submitted fields plus the existing row: a secret
+    present in the dump (tri-state — an explicit value, incl. ``None``/``""``, decides) sets it;
+    an omitted secret keeps whatever the row already has.
+    """
+    dumped = data.model_dump(exclude_unset=True)
+    resulting_type = data.type if data.type is not None else existing.type
+    if "secret" in dumped:
+        resulting_has_secret = bool(dumped["secret"])
+    else:
+        resulting_has_secret = existing.secret_encrypted is not None
+    _require_secret_or_422(resulting_type, resulting_has_secret)
+
+
 async def apply_server_create(repo: Repo, engine: Engine, data: ServerCreate) -> Server:
     _require_secret_or_422(data.type, data.secret is not None and data.secret != "")
     try:
@@ -77,14 +94,7 @@ async def apply_server_update(
     existing = await asyncio.to_thread(repo.get_server, server_id)
     if existing is None:
         raise KeyError(f"server {server_id} not found")
-    dumped = data.model_dump(exclude_unset=True)
-    resulting_type = data.type if data.type is not None else existing.type
-    if "secret" in dumped:
-        # tri-state: explicit value (incl. None) decides; None/"" clears.
-        resulting_has_secret = bool(dumped["secret"])
-    else:
-        resulting_has_secret = existing.secret_encrypted is not None
-    _require_secret_or_422(resulting_type, resulting_has_secret)
+    _require_update_secret(data, existing)
     server = await asyncio.to_thread(repo.update_server, server_id, data)
     await rebuild_engine(engine)
     return server
@@ -108,13 +118,7 @@ async def apply_server_update_with_folders(
     existing = await asyncio.to_thread(repo.get_server, server_id)
     if existing is None:
         raise KeyError(f"server {server_id} not found")
-    dumped = data.model_dump(exclude_unset=True)
-    resulting_type = data.type if data.type is not None else existing.type
-    if "secret" in dumped:
-        resulting_has_secret = bool(dumped["secret"])
-    else:
-        resulting_has_secret = existing.secret_encrypted is not None
-    _require_secret_or_422(resulting_type, resulting_has_secret)
+    _require_update_secret(data, existing)
     try:
         server = await asyncio.to_thread(repo.update_server_with_folders, server_id, data, folders)
     except IntegrityError as exc:
