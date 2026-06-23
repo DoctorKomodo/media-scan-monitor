@@ -110,6 +110,12 @@ The ABS adapter (`audiobookshelf.py`):
 The ABS module docstring's "VERIFY AT IMPLEMENT-TIME" note is extended to cover the
 `/api/libraries` path and response shape.
 
+The base ABC's class docstring (`base.py`) currently says subclasses "MUST set the two
+ClassVars and implement the two async methods." Update it to account for the new
+**defaulted** `list_libraries()` + the `supports_library_discovery` ClassVar, so the
+"frozen interface contract" wording isn't contradicted (this addition is already
+sanctioned by the existing FOLLOWUPS note — see Scope below).
+
 No other adapter changes in this spec.
 
 ---
@@ -123,9 +129,18 @@ stays the source of truth.
   ```python
   library_name: str | None = Field(default=None)
   ```
-- **`db/schemas.py`** — `FolderCreate` and `FolderRead` gain `library_name: str | None =
-  None`. `FolderCreate` does **not** require it; a hand-typed id leaves it `None`.
-- **Migration** — new Alembic revision `0002_folder_library_name` (down_revision `0001`):
+- **`db/schemas.py`** — `FolderCreate` gains `library_name: str | None = None` (not
+  required; a hand-typed id leaves it `None`).
+- **`web/api_schemas.py`** — `FolderRead` gains `library_name: str | None`, **and
+  `FolderRead.from_model` must set it** (`library_name=folder.library_name`) — the field
+  alone is inert without the classmethod wiring. The detail page renders folders as
+  `FolderRead` (it reads `f.extensions`, which only `FolderRead` exposes), so this is the
+  load-bearing path for showing the friendly label. Intentional consequence: `library_name`
+  is now also exposed via `ServerRead.folders` on the JSON `/api` surface — it is non-secret
+  display data, so this is fine and deliberate.
+- **Migration** — new Alembic revision file `0002_folder_library_name.py` with
+  `revision = "0002"`, `down_revision = "0001"` (matching the existing
+  `revision = "0001"` string convention in `0001_initial.py`):
   ```python
   def upgrade() -> None:
       with op.batch_alter_table("folder", schema=None) as batch_op:
@@ -135,10 +150,12 @@ stays the source of truth.
       with op.batch_alter_table("folder", schema=None) as batch_op:
           batch_op.drop_column("library_name")
   ```
-  (SQLite requires `batch_alter_table`; matches the existing migration's idiom.)
+  (`env.py` already sets `render_as_batch=True`; SQLite requires `batch_alter_table`.
+  `AutoString` matches the existing migration's idiom.)
 
-`repo` folder-write paths (`create_folder`, `_set_server_folders`) carry `library_name`
-through from `FolderCreate` to the model. No new repo method.
+`repo` folder-write paths — the only two `Folder(...)` constructions, `create_folder`
+(`repo.py`) and `_set_server_folders` (`repo.py`) — carry `library_name` through from
+`FolderCreate` to the model. No new repo method.
 
 ---
 
@@ -151,9 +168,16 @@ and never drift:
   server-form fields (same `Form(...)` params as `ui_test_server_config`), builds a
   throwaway runtime via `runtime_from_create`, runs the listing, returns the dialog body.
 - `POST /ui/servers/{id}/libraries` — **stored** path (detail page). Loads the server +
-  decrypted secret via `runtime_from_server`. If the form carries a freshly-typed token
-  (replace-in-progress), it overrides the stored secret; otherwise the stored secret is
-  used (so the user need not re-enter it).
+  decrypted secret via `runtime_from_server`. Note this is a deliberate *enhancement* over
+  the stored Test endpoint (`ui_test_server`), which takes **no** form fields and probes
+  purely from the DB secret. If the form carries a freshly-typed token (replace-in-progress)
+  it overrides the stored secret; otherwise the stored secret is used (so the user need not
+  re-enter it). **Empty `secret` means "fall back to the stored token," not "no auth"** — in
+  both the stored-readout and clear-pending states the detail page's `secret` input value is
+  `""` (its JS sets `secret.value = ""`), so an empty form secret must not be treated as an
+  explicit clear. (Listing with a token the user is mid-clearing is harmless; the listing is
+  read-only and never persisted.) The detail form has no `type` field (type is a static
+  readout there), which is fine — the stored endpoint reads the type from the DB.
 
 Both delegate to one shared helper in a new `web/serverlibraries.py` (twin of
 `servertest.py`'s `run_connectivity_test`):
@@ -175,35 +199,67 @@ does not support discovery returns a clean "not supported" message — never a 5
 
 ---
 
-## Component 4 — Folder editor UI (`templates/_folder_editor.html`, `_library_picker.html`, `_library_options.html`, `_folder_rows_script.html`, `static/app.css`)
+## Component 4 — Folder editor UI (`templates/_folder_editor.html`, `_library_picker.html`, `_library_options.html`, `_folder_rows_script.html`, `server_new.html`, `server_detail.html`, `web/pages.py` `_type_specs`/`server_detail`, `static/app.css`)
 
 Mirrors the existing folder **Browse** picker precedent (`_folder_picker.html` + the
 per-row `data-browse` button + one shared dialog per page).
 
-- The folder editor receives a context flag `library_discovery` (true when the server's
-  type advertises `supports_library_discovery`). When true, each row renders a **Fetch**
-  button next to the Library field and a hidden `folder-<i>-library_name` input
-  (pre-filled from `f.library_name`). When false, neither is rendered — the field is the
-  plain text input exactly as today.
+### Per-type discovery flag — always render, toggle visibility (not render-or-omit)
+
+A **server-side render-or-omit** of the Fetch button does **not** work on the new-server
+page, and the spec must not use one: `server_new.html`'s type `<select>` defaults to the
+first `ServerType` enum member (`webhook`), the folder editor is included statically with
+`{% with folders = [] %}`, and the per-type `apply()` JS toggles only
+`.field-secret`/`.field-base_url`/`.field-webhook` — it never touches the folder editor. A
+static boolean would therefore render **False** for the default type and never flip when the
+user selects Audiobookshelf. Instead:
+
+- **Source of truth (rule 2):** extend `_type_specs()` (`web/pages.py`) with one more
+  per-type key, `"supports_library_discovery"`, derived from
+  `registry.get_adapter_class(server_type).supports_library_discovery` — keep it
+  registry-derived, **not** a hand-maintained field on `ServerTypeSpec`, so the adapter
+  stays the single source of that fact. This rides the existing `#type-specs` JSON the
+  `apply()` JS already parses.
+- **New-server page:** the editor always renders the Fetch button + hidden `library_name`;
+  the `apply()` JS sets a `data-library-discovery` flag on the `.folder-editor` root from
+  `spec.supports_library_discovery` on initial load **and** on every type change. CSS gates
+  Fetch-button visibility on that flag (hidden by default → no flash for the webhook
+  default). This mirrors how `apply()` already shows/hides per-type fields.
+- **Detail page:** `server_detail`'s handler (`web/pages.py`) currently passes **no**
+  per-type map. Add the `data-library-discovery` value to its context, computed once from
+  `get_adapter_class(server.type).supports_library_discovery` (type is immutable there), and
+  render it onto the same `.folder-editor` root. No JS toggle needed on this page.
+
+### Picker wiring
+
 - One shared `<dialog data-library-picker>` per page (`_library_picker.html`), with an
   `#library-listing` htmx swap target and Cancel/Select footer (`type=button`).
-- `_folder_rows_script.html` gains library-picker wiring: the per-row Fetch button records
-  the target row's `library_id` + hidden `library_name` inputs, serializes the server-form
-  fields, htmx-POSTs to the right endpoint (unsaved vs `{id}`), and swaps the returned
-  options list into `#library-listing`. **Select** writes the chosen `id` → the library
-  input and `name` → the hidden input, then closes. **Cancel** closes untouched. The
-  row-template clone path adds the same Fetch button + hidden field.
+- The Fetch button is a plain `type=button` with `hx-post` to the right endpoint (unsaved
+  `/ui/servers/libraries` on the new page, `/ui/servers/{id}/libraries` on detail) and
+  `hx-target="#library-listing"`. Per the existing "Test connection" precedent
+  (`_server_form_fields.html`, a `type=button` inside the form with `hx-post` and **no**
+  `hx-include`), htmx auto-includes the **enclosing form** — so the whole server form (and
+  folder rows) is posted and the endpoint simply reads the server `Form(...)` params it
+  declares. No bespoke `hx-include`/`values` scheme.
+- Before firing, the per-row Fetch button records *which* row's `library_id` + hidden
+  `library_name` inputs are the target (same row-tracking idiom as the Browse picker).
+  **Select** writes the chosen `id` → the library input and `name` → the hidden input, then
+  closes. **Cancel** closes untouched. The `_folder_rows_script.html` row-template clone
+  path adds the same Fetch button + hidden field so added rows behave identically.
 - `_library_options.html` renders the result: on `ok`, a radio row per library (name bold,
   id muted); on `not ok`, an inline error styled like `_test_result.html`; on an empty
   list, "No libraries found."
+
+### Display & fallback
+
 - **Detail render:** `_folder_editor.html` shows `library_name` as the field's companion
   label (a muted sub-line with the id) when present; when absent, the id alone, unchanged.
 - **No-JS / failure fallback:** the Library text input is never removed. The Fetch button
-  is `type=button`+JS only, so without JS — or if a fetch fails — the user hand-types the
-  id as today. The hidden `library_name` simply stays empty.
+  is `type=button`+JS/htmx only, so without JS — or if a fetch fails — the user hand-types
+  the id as today. The hidden `library_name` simply stays empty.
 
 `_parse_folder_rows` (`web/pages.py`) reads the new `folder-<i>-library_name` field and
-sets it on each `FolderCreate` (empty string → `None`).
+sets it on each `FolderCreate` (empty string → `None`, via the existing `or None` idiom).
 
 ---
 
@@ -240,8 +296,12 @@ Manual entry remains usable in every failure path.
 - Bad-token path → inline error body.
 
 **UI assertions (`tests/web/test_pages.py`)**
-- Fetch button + hidden `library_name` present on ABS new/detail pages.
-- Absent for a webhook server.
+- `_type_specs()` includes `supports_library_discovery` per type (True for ABS, False for
+  webhook), derived from the adapter registry.
+- The Fetch button + hidden `library_name` are present in the rendered DOM on the new page
+  (always rendered) and on an ABS detail page.
+- The detail page for a webhook server renders the editor with the discovery flag off
+  (`data-library-discovery="false"`), and for an ABS server with it on.
 - A saved folder with a `library_name` renders the friendly label.
 
 ---
@@ -251,8 +311,15 @@ Manual entry remains usable in every failure path.
 **In this spec:** the general capability (`base.py`), the migration + persistence, both web
 endpoints + shared helper, the picker UI, and the **ABS** `list_libraries()` implementation.
 
-**Deferred to `docs/FOLLOWUPS.md`** (one method + flag each, verified at implement-time):
-- **Plex** — `GET /library/sections` → `Directory[].{key, title}`.
-- **Emby / Jellyfin** — `GET /Library/VirtualFolders` → `{Name, ItemId}`.
+**`docs/FOLLOWUPS.md` reconciliation (rule 9):** the existing open item — "`library_id`
+discovery dropdowns (needs a `ServerAdapter.list_libraries()` on the frozen ABC); the UI
+ships **free-text** `library_id` for now. → phase3 README decision 3" — is now largely
+satisfied. Replace it (don't just append) with a narrower remaining item covering only the
+not-yet-implemented backends, and reconcile the "phase3 README decision 3" reference so the
+README no longer claims free-text-only:
 
-These light up the same Fetch button automatically once their adapter flips the flag.
+- **Plex** — flag + `list_libraries()` against `GET /library/sections` → `Directory[].{key, title}`.
+- **Emby / Jellyfin** — flag + `list_libraries()` against `GET /Library/VirtualFolders` → `{Name, ItemId}`.
+
+(Endpoints/response shapes verified at implement-time per rule 1.) These light up the same
+Fetch button automatically once their adapter flips the flag — no UI or endpoint changes.
