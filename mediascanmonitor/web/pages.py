@@ -37,6 +37,7 @@ from mediascanmonitor.db.schemas import FolderCreate, ServerCreate, ServerUpdate
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventRecord, EventsBus
 from mediascanmonitor.servers import registry
+from mediascanmonitor.servers.base import LibraryListResult
 from mediascanmonitor.web.api_schemas import SERVER_TYPE_SPECS, ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import (
     get_engine,
@@ -47,8 +48,9 @@ from mediascanmonitor.web.deps import (
 )
 from mediascanmonitor.web.fsbrowse import DirListing, list_directory
 from mediascanmonitor.web.rebuild import rebuild_engine
-from mediascanmonitor.web.servertest import (
+from mediascanmonitor.web.serverprobe import (
     run_connectivity_test,
+    run_library_listing,
     runtime_from_create,
     runtime_from_server,
 )
@@ -252,6 +254,7 @@ def _parse_folder_rows(form: FormData) -> list[FolderCreate]:
             FolderCreate(
                 path=path,
                 library_id=library_id or None,
+                library_name=str(form.get(f"folder-{i}-library_name") or "").strip() or None,
                 extensions=_split_extensions(str(form.get(f"folder-{i}-extensions") or "")),
                 enabled=f"folder-{i}-enabled" in form,
             )
@@ -394,6 +397,14 @@ def _test_result_response(
     )
 
 
+def _library_options_response(
+    request: Request, templates: Jinja2Templates, result: LibraryListResult
+) -> Response:
+    return templates.TemplateResponse(
+        request=request, name="_library_options.html", context={"result": result}
+    )
+
+
 @router.post("/ui/servers/test")
 async def ui_test_server_config(
     request: Request,
@@ -445,6 +456,54 @@ async def ui_test_server(
     secret = await asyncio.to_thread(repo.resolve_secret, server)
     result = await run_connectivity_test(runtime_from_server(server, secret))
     return _test_result_response(request, templates, result)
+
+
+@router.post("/ui/servers/libraries")
+async def ui_list_libraries_config(
+    request: Request,
+    type: str = Form(...),
+    base_url: str = Form(""),
+    secret: str = Form(""),
+    verify_tls: bool = Form(False),
+    timeout_seconds: float = Form(10.0),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    # Unsaved "fetch before save": probe the config the new-server form currently holds.
+    try:
+        data = ServerCreate(
+            name="lib-fetch",
+            type=ServerType(type),
+            base_url=base_url,
+            secret=secret or None,
+            verify_tls=verify_tls,
+            timeout_seconds=timeout_seconds,
+        )
+    except ValueError as exc:
+        return _library_options_response(
+            request, templates, LibraryListResult(ok=False, detail=str(exc))
+        )
+    result = await run_library_listing(runtime_from_create(data))
+    return _library_options_response(request, templates, result)
+
+
+@router.post("/ui/servers/{server_id}/libraries")
+async def ui_list_libraries(
+    request: Request,
+    server_id: int,
+    secret: str = Form(""),
+    repo: Repo = Depends(get_repo),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    # Stored path: a freshly-typed token (replace-in-progress) overrides the stored secret;
+    # an EMPTY form secret means "fall back to the stored token", never "no auth".
+    server = await asyncio.to_thread(repo.get_server, server_id)
+    if server is None:
+        return _library_options_response(
+            request, templates, LibraryListResult(ok=False, detail=f"server {server_id} not found")
+        )
+    stored = await asyncio.to_thread(repo.resolve_secret, server)
+    result = await run_library_listing(runtime_from_server(server, secret or stored))
+    return _library_options_response(request, templates, result)
 
 
 @router.post("/ui/servers/{server_id}/update")
