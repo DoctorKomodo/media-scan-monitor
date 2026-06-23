@@ -74,7 +74,7 @@ def test_update_server_with_folders_changes_fields_and_swaps_folders(repo: Repo)
 
 def test_update_server_with_folders_empty_clears_all(repo: Repo) -> None:
     server = repo.create_server_with_folders(
-        make_server(name="clear2"), [FolderCreate(path="/x", extensions=["mkv"])]
+        make_server(name="clearfolders"), [FolderCreate(path="/x", extensions=["mkv"])]
     )
     assert server.id is not None
     repo.update_server_with_folders(server.id, ServerUpdate(), [])

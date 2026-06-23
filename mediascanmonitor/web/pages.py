@@ -475,7 +475,6 @@ async def ui_update_server(
     # the server was deleted concurrently, HTTPException 422 (secret gate) / 409 (duplicate name).
     form = await request.form()
     try:
-        # Secret tri-state via exclude_unset: omit when blank (keep), set None when "clear" ticked.
         fields: dict[str, Any] = {
             "name": name,
             "base_url": base_url,
@@ -490,6 +489,8 @@ async def ui_update_server(
             "webhook_headers_json": webhook_headers_json or None,
             "webhook_body_template": webhook_body_template or None,
         }
+        # Secret tri-state: leave "secret" out of fields to keep the stored token, or set None to
+        # clear it; the write-core's exclude_unset dump reads absent=keep, explicit None=clear.
         if clear_secret:
             fields["secret"] = None
         elif secret:
