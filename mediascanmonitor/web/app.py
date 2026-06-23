@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from mediascanmonitor.config.defaults import EXTENSION_PRESETS
 from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventsBus
@@ -45,6 +46,8 @@ def create_app(
     app.state.engine = engine
     app.state.events_bus = events_bus
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    # Offered to the folder editor's extension chip-picker (see _folder_rows_script.html).
+    app.state.templates.env.globals["extension_presets"] = EXTENSION_PRESETS
     app.state.limiter = LoginRateLimiter()
     # A SECOND limiter, dedicated to the unauthenticated /auth/reset-password POST, kept
     # separate from the login limiter so reset attempts never trip the login lockout (and

@@ -77,8 +77,6 @@ request.
 - [ ] **Dashboard widgets** — watch count, per-server health / latency / last-dispatch shown on
       the dashboard and server detail pages. Requires the `/metrics` data or a `/api/status`
       extension. → Phase 4b
-- [ ] **Extension presets** — common file-extension sets (video, music, audiobooks) surfaced as
-      UI presets rather than free-text entry. → Phase 4b
 - [ ] **Optional auth hardening** — e.g. TOTP second factor, session expiry, or per-IP login
       lockout persistence (currently in-memory only). → Phase 4b
 - [ ] **GitHub-repo + local-dir rename at cutover** — the published image is already
