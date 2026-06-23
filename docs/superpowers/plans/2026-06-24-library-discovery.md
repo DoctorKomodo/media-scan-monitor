@@ -42,7 +42,7 @@ These bind every task (copied from CLAUDE.md + the spec):
 | `mediascanmonitor/web/api_schemas.py` | `FolderRead.library_name` + `from_model` wiring | 2 |
 | `mediascanmonitor/migrations/versions/0002_folder_library_name.py` | the migration | 2 |
 | `mediascanmonitor/db/repo.py` | carry `library_name` through `create_folder` + `_set_server_folders` | 2 |
-| `mediascanmonitor/web/servertest.py` | extract shared `_with_adapter()` lifecycle; add `run_library_listing()` beside `run_connectivity_test()` (no new module) | 3 |
+| `mediascanmonitor/web/serverprobe.py` | **renamed from `servertest.py`** (it now hosts more than `test`); extract shared `_with_adapter()` lifecycle; add `run_library_listing()` beside `run_connectivity_test()` | 3 |
 | `mediascanmonitor/web/templates/_library_options.html` | the dialog-body partial the endpoints render | 3 |
 | `mediascanmonitor/web/pages.py` | two endpoints, `_parse_folder_rows` library_name, `_type_specs` flag, `server_detail` context flag | 3 (endpoints + parse), 4 (flag plumbing) |
 | `mediascanmonitor/web/templates/_library_picker.html` | the shared `<dialog>` shell | 4 |
@@ -476,23 +476,26 @@ git commit -m "feat(db): folder.library_name column + migration 0002 (display la
 ## Task 3: Web endpoints + shared listing helper + options partial
 
 **Files:**
-- Modify: `mediascanmonitor/web/servertest.py` (extract `_with_adapter`, add `run_library_listing`)
+- Rename: `mediascanmonitor/web/servertest.py` → `mediascanmonitor/web/serverprobe.py` (use `git mv`), then extract `_with_adapter`, add `run_library_listing`
+- Modify: `mediascanmonitor/web/pages.py` (rename the import, two routes, `_parse_folder_rows`)
+- Modify: `mediascanmonitor/web/api/servers.py` (rename the import only)
 - Create: `mediascanmonitor/web/templates/_library_options.html`
-- Modify: `mediascanmonitor/web/pages.py` (two routes, imports, `_parse_folder_rows`)
 - Test: `tests/web/test_ui_libraries.py` (new)
 
 **Interfaces:**
 - Consumes: `LibraryListResult` + `ServerAdapter` + `supports_library_discovery` (Task 1); `FolderCreate.library_name` (Task 2); existing `runtime_from_create`, `runtime_from_server`, `build_client`, `create_adapter`, `run_connectivity_test`.
 - Produces:
-  - `run_library_listing(runtime: ServerRuntime) -> LibraryListResult` in `web/servertest.py` (the home of the twin Test helper — no new module; both now share one `_with_adapter` client-lifecycle primitive).
+  - `run_library_listing(runtime: ServerRuntime) -> LibraryListResult` in `web/serverprobe.py` (the home of the twin Test helper — no new module; both now share one `_with_adapter` client-lifecycle primitive).
   - `POST /ui/servers/libraries` (unsaved-config path) and `POST /ui/servers/{server_id}/libraries` (stored path), both rendering `_library_options.html`.
 
-**Why no new module (consolidation):** `run_library_listing` and `run_connectivity_test` differ
-only in *which* adapter method they call; the build-client / try / `aclose()` lifecycle is
-identical, and the library endpoints already import `runtime_from_*` from `servertest.py`.
-Factoring the lifecycle into one `_with_adapter` helper and keeping both probes in one file is
-the project's "don't maintain duplicate code" rule applied — a parallel new module would split
-one concern across two files.
+**Why rename + no new module (consolidation):** `run_library_listing` and `run_connectivity_test`
+differ only in *which* adapter method they call; the build-client / try / `aclose()` lifecycle is
+identical, and the library endpoints already need `runtime_from_*` from the same file. Factoring
+the lifecycle into one `_with_adapter` helper and keeping both probes in one module is the
+project's "don't maintain duplicate code" rule applied. The module is renamed `servertest.py` →
+`serverprobe.py` because it no longer hosts only `test` — both functions are read-only *probes*
+of a live (possibly unsaved) server config. Only `pages.py` and `api/servers.py` import it; no
+test imports the module by name.
 
 - [ ] **Step 1: Write the failing integration tests**
 
@@ -598,9 +601,26 @@ def test_parse_folder_rows_reads_library_name() -> None:
 Run: `pytest tests/web/test_ui_libraries.py -v`
 Expected: FAIL — 404/405 (routes don't exist yet).
 
-- [ ] **Step 3: Extract the shared lifecycle + add `run_library_listing` in `servertest.py`**
+- [ ] **Step 3: Rename the module, then extract the shared lifecycle + add `run_library_listing`**
 
-In `mediascanmonitor/web/servertest.py`, add the typing + base imports to the existing groups:
+First rename the file and repoint its two importers (the module name no longer fits now that it
+hosts a non-`test` probe):
+
+```bash
+git mv mediascanmonitor/web/servertest.py mediascanmonitor/web/serverprobe.py
+```
+
+Update the import in `mediascanmonitor/web/api/servers.py` — change
+`from mediascanmonitor.web.servertest import ...` to
+`from mediascanmonitor.web.serverprobe import ...` (same imported names). Update its docstring
+reference if it names the module. (The `pages.py` import is updated in Step 5.)
+
+Update the renamed module's own docstring (it currently says "Shared connectivity-test helper…")
+to describe both probes, e.g. "Shared one-shot *probes* of a live server config (connectivity
+test + library listing): build a throwaway runtime/adapter, run one operation, always close the
+client. The JSON `/api/*` and HTML `/ui/*` surfaces both call these so they never drift."
+
+Then in `mediascanmonitor/web/serverprobe.py`, add the typing + base imports to the existing groups:
 
 ```python
 from collections.abc import Awaitable, Callable
@@ -674,12 +694,12 @@ Create `mediascanmonitor/web/templates/_library_options.html`:
 
 - [ ] **Step 5: Add the endpoints + parse to `pages.py`**
 
-In `mediascanmonitor/web/pages.py`, add `run_library_listing` to the existing `servertest`
-import block (it already imports `run_connectivity_test`, `runtime_from_create`,
-`runtime_from_server` from there):
+In `mediascanmonitor/web/pages.py`, repoint the import to the renamed module and add
+`run_library_listing` (it already imports `run_connectivity_test`, `runtime_from_create`,
+`runtime_from_server`):
 
 ```python
-from mediascanmonitor.web.servertest import (
+from mediascanmonitor.web.serverprobe import (
     run_connectivity_test,
     run_library_listing,
     runtime_from_create,
@@ -783,9 +803,12 @@ Expected: PASS.
 
 ```bash
 ruff format . && ruff check . && mypy mediascanmonitor && pytest
-git add mediascanmonitor/web/servertest.py mediascanmonitor/web/templates/_library_options.html mediascanmonitor/web/pages.py tests/web/test_ui_libraries.py
-git commit -m "feat(web): library-listing endpoints sharing the Test flow's adapter lifecycle"
+git add -A mediascanmonitor/web/serverprobe.py mediascanmonitor/web/api/servers.py mediascanmonitor/web/templates/_library_options.html mediascanmonitor/web/pages.py tests/web/test_ui_libraries.py
+git commit -m "feat(web): rename servertest→serverprobe, add library listing sharing one adapter lifecycle"
 ```
+
+> `git add -A` ensures the rename (the deleted `servertest.py` + new `serverprobe.py`) is staged
+> as a move. Verify with `git status` that it shows `renamed: servertest.py -> serverprobe.py`.
 
 ---
 
@@ -1166,8 +1189,9 @@ scripts/dev_serve.sh   # http://0.0.0.0:8099, password dev
   they appear across tasks.
 - **No placeholders:** every code step shows complete code; every run step has an exact
   command + expected result.
-- **Consolidation (post-Opus-review):** the listing helper lives in `servertest.py` (not a new
-  module) and shares one `_with_adapter` client-lifecycle primitive with `run_connectivity_test`;
+- **Consolidation (post-Opus-review):** the listing helper lives in `serverprobe.py` (renamed
+  from `servertest.py`, not a new module) and shares one `_with_adapter` client-lifecycle
+  primitive with `run_connectivity_test`;
   the picker dialog reuses the existing `.fs-dialog*` chrome (no duplicated dialog CSS); the
   library grid cell claims its area by class like `.nf-path`/`.nf-ext` (not a direct-child
   selector). The two endpoints + two render helpers stay deliberately parallel to the existing
