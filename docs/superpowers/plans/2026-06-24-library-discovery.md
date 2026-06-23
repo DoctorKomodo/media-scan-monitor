@@ -42,7 +42,7 @@ These bind every task (copied from CLAUDE.md + the spec):
 | `mediascanmonitor/web/api_schemas.py` | `FolderRead.library_name` + `from_model` wiring | 2 |
 | `mediascanmonitor/migrations/versions/0002_folder_library_name.py` | the migration | 2 |
 | `mediascanmonitor/db/repo.py` | carry `library_name` through `create_folder` + `_set_server_folders` | 2 |
-| `mediascanmonitor/web/serverlibraries.py` | `run_library_listing()` shared helper | 3 |
+| `mediascanmonitor/web/servertest.py` | extract shared `_with_adapter()` lifecycle; add `run_library_listing()` beside `run_connectivity_test()` (no new module) | 3 |
 | `mediascanmonitor/web/templates/_library_options.html` | the dialog-body partial the endpoints render | 3 |
 | `mediascanmonitor/web/pages.py` | two endpoints, `_parse_folder_rows` library_name, `_type_specs` flag, `server_detail` context flag | 3 (endpoints + parse), 4 (flag plumbing) |
 | `mediascanmonitor/web/templates/_library_picker.html` | the shared `<dialog>` shell | 4 |
@@ -213,11 +213,12 @@ Update the `class ServerAdapter` docstring line "Subclasses MUST set the two Cla
 
 In `mediascanmonitor/servers/audiobookshelf.py`:
 
-Add imports (keep the first-party group together; `pydantic` is third-party):
+Add `from pydantic import BaseModel` to the **third-party** import group (beside the existing
+`import httpx`, blank line before the first-party `mediascanmonitor` group — `ruff check --fix`
+autofixes I001 if the placement is off, so don't assert "clean" until after `ruff format`).
+Extend the existing base import to pull in the new names:
 
 ```python
-from pydantic import BaseModel
-
 from mediascanmonitor.servers.base import (
     LibraryListResult,
     LibraryOption,
@@ -229,7 +230,8 @@ from mediascanmonitor.servers.base import (
 
 (Replace the existing `from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult` line with the grouped import above.)
 
-After the imports, add the response models:
+After the imports, add the response models. Pydantic's default `extra` is already `ignore`, so
+unknown fields like `mediaType` are dropped without any `model_config` — keep them minimal:
 
 ```python
 class _AbsLibrary(BaseModel):
@@ -238,7 +240,6 @@ class _AbsLibrary(BaseModel):
 
 
 class _AbsLibrariesResponse(BaseModel):
-    model_config = {"extra": "ignore"}
     libraries: list[_AbsLibrary]
 ```
 
@@ -472,19 +473,26 @@ git commit -m "feat(db): folder.library_name column + migration 0002 (display la
 
 ---
 
-## Task 3: Web endpoints + shared helper + options partial
+## Task 3: Web endpoints + shared listing helper + options partial
 
 **Files:**
-- Create: `mediascanmonitor/web/serverlibraries.py`
+- Modify: `mediascanmonitor/web/servertest.py` (extract `_with_adapter`, add `run_library_listing`)
 - Create: `mediascanmonitor/web/templates/_library_options.html`
 - Modify: `mediascanmonitor/web/pages.py` (two routes, imports, `_parse_folder_rows`)
 - Test: `tests/web/test_ui_libraries.py` (new)
 
 **Interfaces:**
-- Consumes: `LibraryListResult` + `supports_library_discovery` (Task 1); `FolderCreate.library_name` (Task 2); existing `runtime_from_create`, `runtime_from_server`, `build_client`, `create_adapter`.
+- Consumes: `LibraryListResult` + `ServerAdapter` + `supports_library_discovery` (Task 1); `FolderCreate.library_name` (Task 2); existing `runtime_from_create`, `runtime_from_server`, `build_client`, `create_adapter`, `run_connectivity_test`.
 - Produces:
-  - `run_library_listing(runtime: ServerRuntime) -> LibraryListResult` in `web/serverlibraries.py`.
+  - `run_library_listing(runtime: ServerRuntime) -> LibraryListResult` in `web/servertest.py` (the home of the twin Test helper — no new module; both now share one `_with_adapter` client-lifecycle primitive).
   - `POST /ui/servers/libraries` (unsaved-config path) and `POST /ui/servers/{server_id}/libraries` (stored path), both rendering `_library_options.html`.
+
+**Why no new module (consolidation):** `run_library_listing` and `run_connectivity_test` differ
+only in *which* adapter method they call; the build-client / try / `aclose()` lifecycle is
+identical, and the library endpoints already import `runtime_from_*` from `servertest.py`.
+Factoring the lifecycle into one `_with_adapter` helper and keeping both probes in one file is
+the project's "don't maintain duplicate code" rule applied — a parallel new module would split
+one concern across two files.
 
 - [ ] **Step 1: Write the failing integration tests**
 
@@ -547,10 +555,42 @@ def test_libraries_stored_uses_saved_secret(auth_client: httpx.Client, repo) -> 
     assert route.calls.last.request.headers["Authorization"] == "Bearer stored-tok"
 
 
+@respx.mock
+def test_libraries_stored_typed_token_overrides_stored(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    # The deliberate enhancement over ui_test_server: a freshly-typed token in the form wins.
+    server = repo.create_server(
+        ServerCreate(name="ABS", type=ServerType.audiobookshelf, base_url=ABS_BASE, secret="stored-tok")
+    )
+    route = respx.get(f"{ABS_BASE}/api/libraries").mock(
+        return_value=httpx.Response(200, json={"libraries": []})
+    )
+    auth_client.post(f"/ui/servers/{server.id}/libraries", data={"secret": "typed-override"})
+    assert route.calls.last.request.headers["Authorization"] == "Bearer typed-override"
+
+
 def test_libraries_stored_404_for_missing(auth_client: httpx.Client) -> None:
     resp = auth_client.post("/ui/servers/9999/libraries", data={"secret": ""})
     assert resp.status_code == 200
     assert "not found" in resp.text.lower()
+
+
+def test_parse_folder_rows_reads_library_name() -> None:
+    # The hidden folder-<i>-library_name field round-trips into FolderCreate; empty → None.
+    from starlette.datastructures import FormData
+
+    from mediascanmonitor.web.pages import _parse_folder_rows
+
+    named = _parse_folder_rows(
+        FormData([("folder-0-path", "/data/abs"), ("folder-0-library_id", "lib_x"),
+                  ("folder-0-library_name", "Audiobooks")])
+    )
+    assert (named[0].library_id, named[0].library_name) == ("lib_x", "Audiobooks")
+
+    blank = _parse_folder_rows(
+        FormData([("folder-0-path", "/data/tv"), ("folder-0-library_id", "2"),
+                  ("folder-0-library_name", "")])
+    )
+    assert blank[0].library_name is None
 ```
 
 - [ ] **Step 2: Run the tests to confirm they fail**
@@ -558,34 +598,53 @@ def test_libraries_stored_404_for_missing(auth_client: httpx.Client) -> None:
 Run: `pytest tests/web/test_ui_libraries.py -v`
 Expected: FAIL — 404/405 (routes don't exist yet).
 
-- [ ] **Step 3: Write the shared helper**
+- [ ] **Step 3: Extract the shared lifecycle + add `run_library_listing` in `servertest.py`**
 
-Create `mediascanmonitor/web/serverlibraries.py`:
+In `mediascanmonitor/web/servertest.py`, add the typing + base imports to the existing groups:
 
 ```python
-"""Shared library-listing helper (twin of servertest.run_connectivity_test).
+from collections.abc import Awaitable, Callable
 
-One place builds the throwaway adapter + client and calls ``list_libraries()`` so the
-unsaved-config and stored library endpoints can never drift. The client is ALWAYS closed.
-"""
+from mediascanmonitor.servers.base import LibraryListResult, ServerAdapter
+```
 
-from mediascanmonitor.config.runtime import ServerRuntime
-from mediascanmonitor.servers.base import LibraryListResult
-from mediascanmonitor.servers.http import build_client
-from mediascanmonitor.servers.registry import create_adapter
+(`Awaitable`/`Callable` join the stdlib group at the top; `LibraryListResult`/`ServerAdapter`
+join the existing `mediascanmonitor.servers...` first-party group.)
+
+Add the shared primitive and the new probe, and refactor `run_connectivity_test` to use it —
+so the build-client / `aclose()` lifecycle lives in exactly one place:
+
+```python
+async def _with_adapter[T](
+    runtime: ServerRuntime, fn: Callable[[ServerAdapter], Awaitable[T]]
+) -> T:
+    """Build a throwaway adapter for ``runtime``, run ``fn``, and ALWAYS close the client."""
+    client = build_client(verify_tls=runtime.verify_tls, timeout_seconds=runtime.timeout_seconds)
+    try:
+        return await fn(create_adapter(runtime, client))
+    finally:
+        await client.aclose()
+
+
+async def run_connectivity_test(runtime: ServerRuntime) -> ServerTestResponse:
+    """Probe a server via its registered adapter, always closing the client."""
+    result = await _with_adapter(runtime, lambda adapter: adapter.test())
+    return ServerTestResponse(ok=result.ok, detail=result.detail)
 
 
 async def run_library_listing(runtime: ServerRuntime) -> LibraryListResult:
-    """List a server's libraries via its adapter, always closing the client."""
-    client = build_client(verify_tls=runtime.verify_tls, timeout_seconds=runtime.timeout_seconds)
-    try:
-        adapter = create_adapter(runtime, client)
+    """List a server's libraries via its adapter (twin of run_connectivity_test)."""
+
+    async def _list(adapter: ServerAdapter) -> LibraryListResult:
         if not adapter.supports_library_discovery:
             return LibraryListResult(ok=False, detail="This server type has no libraries to list.")
         return await adapter.list_libraries()
-    finally:
-        await client.aclose()
+
+    return await _with_adapter(runtime, _list)
 ```
+
+(Replace the existing `run_connectivity_test` body with the version above; PEP 695 `[T]`
+generics are fine on Python 3.14 + `mypy --strict`.)
 
 - [ ] **Step 4: Write the options partial**
 
@@ -615,13 +674,20 @@ Create `mediascanmonitor/web/templates/_library_options.html`:
 
 - [ ] **Step 5: Add the endpoints + parse to `pages.py`**
 
-In `mediascanmonitor/web/pages.py`, extend the `servertest` import and add the helper import:
+In `mediascanmonitor/web/pages.py`, add `run_library_listing` to the existing `servertest`
+import block (it already imports `run_connectivity_test`, `runtime_from_create`,
+`runtime_from_server` from there):
 
 ```python
-from mediascanmonitor.web.serverlibraries import run_library_listing
+from mediascanmonitor.web.servertest import (
+    run_connectivity_test,
+    run_library_listing,
+    runtime_from_create,
+    runtime_from_server,
+)
 ```
 
-and add `LibraryListResult` to the api/base imports — import it from the adapter base:
+and add `LibraryListResult` to the adapter-base imports:
 
 ```python
 from mediascanmonitor.servers.base import LibraryListResult
@@ -717,8 +783,8 @@ Expected: PASS.
 
 ```bash
 ruff format . && ruff check . && mypy mediascanmonitor && pytest
-git add mediascanmonitor/web/serverlibraries.py mediascanmonitor/web/templates/_library_options.html mediascanmonitor/web/pages.py tests/web/test_ui_libraries.py
-git commit -m "feat(web): library-listing endpoints + shared helper, twinning the Test flow"
+git add mediascanmonitor/web/servertest.py mediascanmonitor/web/templates/_library_options.html mediascanmonitor/web/pages.py tests/web/test_ui_libraries.py
+git commit -m "feat(web): library-listing endpoints sharing the Test flow's adapter lifecycle"
 ```
 
 ---
@@ -860,29 +926,41 @@ After the existing `{% include "_folder_picker.html" %}` line, add:
 
 - [ ] **Step 5: Create the picker dialog shell**
 
-Create `mediascanmonitor/web/templates/_library_picker.html`:
+Create `mediascanmonitor/web/templates/_library_picker.html`. **Reuse the existing
+`.fs-dialog*` chrome classes** (already fully themed with the project's design tokens in
+`app.css` — `.fs-dialog`, `.fs-dialog-head`, `.fs-close`, `.fs-dialog-foot`, `.fs-cancel`,
+`.fs-select`) so no dialog-shell CSS is duplicated. The JS keys off the `data-library-*`
+attributes, independent of these styling classes:
 
 ```html
 {# Library picker dialog — one shared instance per page (one folder editor per page, same
-   assumption as _folder_picker.html). Opened per row by the library-picker JS in
-   _folder_rows_script.html, which POSTs the server form to the row's data-library-endpoint,
-   swaps the options into #library-listing, and writes the chosen id + name back on Select. #}
-<dialog class="lib-dialog" data-library-picker aria-label="Choose a library">
-  <div class="lib-dialog-head">
+   assumption as _folder_picker.html). Reuses the .fs-dialog* chrome. Opened per row by the
+   library-picker JS in _folder_rows_script.html, which POSTs the server form to the row's
+   data-library-endpoint, swaps options into #library-listing, and writes the chosen id + name
+   back on Select. #}
+<dialog class="fs-dialog" data-library-picker aria-label="Choose a library">
+  <div class="fs-dialog-head">
     <h2>Choose a library</h2>
-    <button type="button" class="lib-close" data-library-close aria-label="Close">&times;</button>
+    <button type="button" class="fs-close" data-library-close aria-label="Close">&times;</button>
   </div>
   <div id="library-listing" class="lib-listing"></div>
-  <div class="lib-dialog-foot">
-    <button type="button" data-library-close>Cancel</button>
-    <button type="button" data-library-pick disabled>Select</button>
+  <div class="fs-dialog-foot">
+    <button type="button" class="fs-cancel" data-library-close>Cancel</button>
+    <button type="button" class="fs-select" data-library-pick disabled>Select</button>
   </div>
 </dialog>
 ```
 
 - [ ] **Step 6: Wire the picker JS**
 
-In `mediascanmonitor/web/templates/_folder_rows_script.html`, add a new `<script>` block at the end (after the extension-chip block). It mirrors the folder-picker block's structure (shared dialog, event delegation, `.lib-picker-ready` reveal, `htmx.ajax` with `source` to include the enclosing form):
+In `mediascanmonitor/web/templates/_folder_rows_script.html`, add a new `<script>` block at the end (after the extension-chip block). It mirrors the folder-picker block's structure (shared dialog, event delegation, `.lib-picker-ready` reveal, `htmx.ajax` with `source` to include the enclosing form).
+
+> **Riskiest line in the feature:** `htmx.ajax("POST", url, {source: btn})` relies on htmx
+> collecting the parameters from `source`'s enclosing `<form>` — the existing folder Browse
+> picker uses a query-string GET with no `source`, so there's no in-repo precedent. htmx does
+> document this behavior, but the **manual verification step is the gate for it** — if the POST
+> arrives with no `type`/`base_url`/`secret`, that's the cause. (Fallback if it misbehaves: pass
+> the fields explicitly via the `values` option built from the form.)
 
 ```html
 <script>
@@ -956,38 +1034,69 @@ and inside `function apply() { ... }`, after the existing field toggles, add:
       }
 ```
 
-- [ ] **Step 8: Style the Fetch button, name label, and dialog**
+- [ ] **Step 8: Style the Fetch button, name label, and option list**
 
-In `mediascanmonitor/web/static/app.css`, append:
+Two edits to `mediascanmonitor/web/static/app.css`. The picker dialog needs **no new chrome
+CSS** — `_library_picker.html` reuses `.fs-dialog*` (Step 5) — only the library cell layout and
+the option-list content.
+
+**(a) Make the wrapped library cell the grid child.** The current rule targets the bare input
+as a *direct* child, which breaks once it's wrapped in `.nf-library`. Change it to target the
+wrapper by class — exactly how `.nf-path`/`.nf-ext` already claim their grid areas:
 
 ```css
-/* Library discovery: the per-row Fetch button + picker dialog. The Fetch button is hidden
-   unless JS is present (.lib-picker-ready) AND the server type supports discovery — so a
-   no-JS page keeps the plain free-text library id with no dead control. */
-.nf-library { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+/* was: .nf-row > input[name$="-library_id"] { grid-area: lib; } */
+.nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .nf-library-id { flex: 1 1 auto; min-width: 0; }
-.nf-library-name { flex: 1 0 100%; font-size: 0.8rem; }
-.nf-fetch-lib { display: none; flex: 0 0 auto; }
-.folder-editor.lib-picker-ready[data-library-discovery="true"] .nf-fetch-lib {
-  display: inline-flex;
-}
-
-.lib-dialog { border: none; border-radius: 10px; padding: 0; max-width: 32rem; width: 92vw; }
-.lib-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
-.lib-dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 0.9rem 1.1rem; }
-.lib-dialog-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.9rem 1.1rem; }
-.lib-listing { padding: 0 1.1rem; max-height: 50vh; overflow-y: auto; }
-.lib-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-.lib-option { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.4rem 0.5rem; border-radius: 6px; cursor: pointer; }
-.lib-option:hover { background: rgba(127, 127, 127, 0.12); }
-.lib-name { font-weight: 600; }
-.lib-id { font-size: 0.82rem; }
-.lib-error { color: #b3261e; }
+.nf-library-name { flex: 1 0 100%; }  /* friendly name wraps to its own line under the id */
 ```
 
-> NOTE: match the existing palette/variables in `app.css` (e.g. reuse the project's danger
-> colour token if one exists instead of the literal `#b3261e`, and the dialog styling already
-> used by `.fs-dialog`). Keep the visual language consistent with the folder picker.
+And in the existing `@media (max-width: 680px)` block, replace the bare-input rule
+`.nf-row input[name$="-library_id"] { flex: 1 1 16rem; }` with the wrapper:
+
+```css
+  .nf-row .nf-library { flex: 1 1 16rem; }
+```
+
+**(b) Append the Fetch-button + option-list rules** (reusing palette tokens + the `.fs-error`
+style; no hardcoded colours):
+
+```css
+/* Library discovery: the per-row Fetch button + picker option list. Fetch is hidden unless JS
+   is present (.lib-picker-ready) AND the server type supports discovery — so a no-JS page keeps
+   the plain free-text library id with no dead control. Dialog chrome reuses .fs-dialog*. */
+.nf-fetch-lib {
+  flex: 0 0 auto;
+  display: none;
+  font: 600 0.78rem var(--sans);
+  padding: 0.34rem 0.55rem;
+  color: var(--signal); background: transparent;
+  border: 1px solid var(--signal-dim); border-radius: var(--r-sm);
+}
+.nf-fetch-lib:hover { background: var(--signal); color: #04181b; border-color: var(--signal); }
+.folder-editor.lib-picker-ready[data-library-discovery="true"] .nf-fetch-lib { display: inline-flex; }
+.nf-library-name { font: 0.78rem/1.4 var(--sans); color: var(--muted); }
+
+.lib-listing { display: flex; flex-direction: column; min-height: 0; }
+.lib-options { list-style: none; margin: 0; padding: 0 0.5rem; overflow: auto; max-height: 46vh; }
+.lib-option {
+  display: flex; align-items: baseline; gap: 0.55rem;
+  width: 100%; padding: 0.5rem 0.45rem;
+  border-bottom: 1px solid var(--line-2); cursor: pointer;
+}
+.lib-options li:last-child .lib-option { border-bottom: 0; }
+.lib-option:hover { background: var(--panel-2); }
+.lib-name { font-weight: 600; }
+.lib-id { font: 0.82rem var(--mono); }
+.lib-empty, .lib-error { font: 0.82rem/1.45 var(--sans); padding: 0.7rem 1rem; margin: 0; }
+.lib-empty { color: var(--muted); }
+.lib-error { color: #f6b9bd; }  /* same as .fs-error */
+```
+
+> The `#04181b`, `--signal-dim`, `#f6b9bd` values are copied from the existing `.nf-browse` /
+> `.fs-select` / `.fs-error` rules so the Fetch button and option list read as the same
+> component family as the folder picker. Confirm the token names against `app.css` before
+> pasting (they're defined in the `:root` block).
 
 - [ ] **Step 9: Reconcile the FOLLOWUPS entry**
 
@@ -1057,3 +1166,9 @@ scripts/dev_serve.sh   # http://0.0.0.0:8099, password dev
   they appear across tasks.
 - **No placeholders:** every code step shows complete code; every run step has an exact
   command + expected result.
+- **Consolidation (post-Opus-review):** the listing helper lives in `servertest.py` (not a new
+  module) and shares one `_with_adapter` client-lifecycle primitive with `run_connectivity_test`;
+  the picker dialog reuses the existing `.fs-dialog*` chrome (no duplicated dialog CSS); the
+  library grid cell claims its area by class like `.nf-path`/`.nf-ext` (not a direct-child
+  selector). The two endpoints + two render helpers stay deliberately parallel to the existing
+  twin Test endpoints — that mirror is the house pattern, not redundancy.
