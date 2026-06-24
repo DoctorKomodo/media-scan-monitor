@@ -193,6 +193,13 @@ def test_abs_detail_flags_library_discovery_on(auth_client: httpx.Client, repo) 
     assert "Audiobooks" in body  # the saved friendly name renders as the companion label
 
 
+def test_plex_detail_flags_library_discovery_on(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    sid = _seed_server(repo)  # a plex server
+    body = auth_client.get(f"/servers/{sid}").text
+    assert 'data-library-discovery="true"' in body
+    assert "data-fetch-lib" in body
+
+
 def test_webhook_detail_flags_library_discovery_off(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook))
     body = auth_client.get(f"/servers/{hook.id}").text

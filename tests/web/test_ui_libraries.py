@@ -1,5 +1,7 @@
 """Library-discovery endpoints: unsaved-config + stored, success / not-supported / error."""
 
+import re
+
 import httpx
 import respx
 
@@ -29,6 +31,27 @@ def test_libraries_unsaved_renders_options(auth_client: httpx.Client) -> None:
     assert resp.status_code == 200
     assert "Audiobooks" in resp.text
     assert "lib_abc" in resp.text
+
+
+@respx.mock
+def test_libraries_rendered_sorted_by_name_case_insensitive(auth_client: httpx.Client) -> None:
+    # Backend order is arbitrary; the picker presents libraries A→Z, case-insensitively.
+    respx.get(f"{ABS_BASE}/api/libraries").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "libraries": [
+                    {"id": "3", "name": "Zebra"},
+                    {"id": "1", "name": "apple"},
+                    {"id": "2", "name": "Mango"},
+                ]
+            },
+        )
+    )
+    resp = auth_client.post("/ui/servers/libraries", data=_abs_form())
+    assert resp.status_code == 200
+    names = re.findall(r'data-lib-name="([^"]*)"', resp.text)
+    assert names == ["apple", "Mango", "Zebra"]
 
 
 def test_libraries_unsaved_not_supported_for_webhook(auth_client: httpx.Client) -> None:

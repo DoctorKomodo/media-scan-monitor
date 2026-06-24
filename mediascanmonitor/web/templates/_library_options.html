@@ -2,7 +2,7 @@
    On success: a radio per library (the picker JS reads value=id + data-lib-name). #}
 {% if result.ok and result.libraries %}
 <ul class="lib-options" role="list">
-  {% for lib in result.libraries %}
+  {% for lib in result.libraries | sort(attribute="name") %}
   <li>
     <label class="lib-option">
       <input type="radio" name="lib-choice" value="{{ lib.id }}" data-lib-name="{{ lib.name }}">
