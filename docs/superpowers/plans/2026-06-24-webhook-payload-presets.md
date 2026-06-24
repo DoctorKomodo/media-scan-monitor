@@ -340,7 +340,10 @@ def test_update_server_changes_preset(repo: Repo) -> None:
 - [ ] **Step 2: Run to verify failure**
 
 Run: `pytest tests/db/test_repo.py -k webhook_payload_preset -v`
-Expected: FAIL — `ServerCreate` has no field `webhook_payload_preset` (Pydantic `ValidationError`/`TypeError`).
+Expected: FAIL. Note: Pydantic v2 `ServerCreate` uses `extra="ignore"`, so the unknown
+`webhook_payload_preset` kwarg is **silently dropped** (no `ValidationError`). The test fails
+instead with `AttributeError` when reading `created.webhook_payload_preset` off the `Server`
+ORM row — a legitimate RED.
 
 - [ ] **Step 3: Add the field to the schemas and persist it in the repo**
 
@@ -403,7 +406,8 @@ def test_server_read_carries_webhook_payload_preset(repo) -> None:  # type: igno
 - [ ] **Step 7: Run to verify failure**
 
 Run: `pytest tests/web/test_pages.py::test_server_read_carries_webhook_payload_preset -v`
-Expected: FAIL — `ServerRead` has no field `webhook_payload_preset`.
+Expected: FAIL with `AttributeError: 'ServerRead' object has no attribute
+'webhook_payload_preset'` (the model `extra="ignore"`s the field until it is declared).
 
 - [ ] **Step 8: Add the field to `ServerRead`**
 
