@@ -31,13 +31,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import FormData
 from starlette.responses import Response
 
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.db.repo import Repo
 from mediascanmonitor.db.schemas import FolderCreate, ServerCreate, ServerUpdate
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventRecord, EventsBus
 from mediascanmonitor.servers import registry
 from mediascanmonitor.servers.base import LibraryListResult
+from mediascanmonitor.servers.webhook_presets import WEBHOOK_PRESETS
 from mediascanmonitor.web.api_schemas import SERVER_TYPE_SPECS, ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import (
     get_engine,
@@ -99,6 +100,13 @@ def _scan_modes_by_type() -> dict[str, list[str]]:
         )
         for server_type in ServerType
     }
+
+
+def _webhook_preset_options() -> list[tuple[str, str]]:
+    """(value, label) for the webhook payload-preset <select>: Custom first, then the registry."""
+    options: list[tuple[str, str]] = [(WebhookPreset.custom.value, "Custom")]
+    options += [(preset.value, definition.label) for preset, definition in WEBHOOK_PRESETS.items()]
+    return options
 
 
 def _type_specs() -> dict[str, dict[str, bool]]:
@@ -171,6 +179,7 @@ async def server_new_page(
             "debounce_modes": [m.value for m in DebounceMode],
             "type_specs": _type_specs(),
             "scan_modes_by_type": _scan_modes_by_type(),
+            "webhook_presets": _webhook_preset_options(),
         },
     )
 
@@ -203,6 +212,7 @@ async def server_detail(
             # so the template only offers "Clear" when the type allows an empty secret.
             "secret_clearable": not SERVER_TYPE_SPECS[server.type].requires_secret,
             "library_discovery": registry.get_adapter_class(server.type).supports_library_discovery,
+            "webhook_presets": _webhook_preset_options(),
         },
     )
 

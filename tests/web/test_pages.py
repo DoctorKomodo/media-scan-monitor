@@ -219,3 +219,32 @@ def test_server_read_carries_webhook_payload_preset(repo) -> None:  # type: igno
     )
     read = ServerRead.from_model(server, [])
     assert read.webhook_payload_preset == WebhookPreset.sonarr_radarr
+
+
+def test_webhook_form_renders_payload_preset_select(auth_client: httpx.Client) -> None:
+    body = auth_client.get("/servers/new").text
+    assert 'name="webhook_payload_preset"' in body
+    assert "Sonarr / Radarr" in body  # the registry label is offered
+
+
+def test_webhook_detail_preselects_saved_preset(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    import re
+
+    from mediascanmonitor.db.models import WebhookPreset
+
+    hook = repo.create_server(
+        ServerCreate(
+            name="hook-pre",
+            type=ServerType.webhook,
+            webhook_payload_preset=WebhookPreset.sonarr_radarr,
+        )
+    )
+    body = auth_client.get(f"/servers/{hook.id}").text
+    # the saved preset's <option> is the selected one
+    assert re.search(r'value="sonarr_radarr"[^>]*\bselected\b', body)
+
+
+def test_webhook_preset_toggle_script_present(auth_client: httpx.Client) -> None:
+    body = auth_client.get("/servers/new").text
+    assert "webhook-preset-select" in body  # the select id the toggle script binds to
+    assert "field-webhook-body" in body  # the element it shows/hides
