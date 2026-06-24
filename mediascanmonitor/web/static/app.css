@@ -32,6 +32,11 @@
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 
+  /* Field-label / column-header micro-caps — ONE definition for every input + column label
+     (the shared `.field-label, .nf-head, .nf-ext-label` rule). Reuse on any new such label. */
+  --label-font:     600 0.66rem var(--mono);
+  --label-tracking: 0.09em;
+
   --r:    11px;
   --r-sm: 7px;
   --pad:  1.05rem 1.2rem;
@@ -527,10 +532,14 @@ pre code { border: 0; background: none; padding: 0; }
 }
 
 .field { display: flex; flex-direction: column; gap: 0.34rem; margin: 0; min-width: 0; }
-.field-label {
-  font: 600 0.66rem var(--mono);
+/* Every field label + folder column header shares one micro-caps definition (the --label-*
+   tokens) so they can never drift in size/tracking again. Add new label selectors here. */
+.field-label,
+.nf-head,
+.nf-ext-label {
+  font: var(--label-font);
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: var(--label-tracking);
   color: var(--faint);
 }
 .field-hint { font: 0.74rem/1.4 var(--sans); color: var(--faint); }
@@ -672,34 +681,27 @@ pre code { border: 0; background: none; padding: 0; }
     "on ext  ext rm";
   row-gap: 0.7rem;
 }
-/* align-self:start keeps the path + library inputs at the row's top so the library's
-   optional name label hangs BELOW its field instead of pushing the field upward (the
-   label makes the lib cell taller; without this the centered path input would misalign). */
-.nf-row .nf-path { grid-area: path; align-self: start; }
-.nf-row .nf-library { grid-area: lib; align-self: start; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-width: 0; }
+/* The library cell holds id + Fetch + readonly name on ONE line; nowrap makes them shrink to
+   share the width instead of wrapping the name box below (which would misalign the row). */
+.nf-row .nf-path { grid-area: path; align-self: center; }
+.nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: nowrap; gap: 0.4rem; align-items: center; min-width: 0; }
 /* width:auto + the element selector beat the global `.nf-row input[type=text]{width:100%}`,
-   so the id shares its line with Fetch instead of pushing it to wrap — mirrors .nf-path/Browse. */
+   so the id + readonly name share the line with Fetch instead of being forced full-width. */
 .nf-row .nf-library input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; }
-.nf-library-name { flex: 1 0 100%; font: 0.78rem/1.4 var(--sans); color: var(--muted); }  /* friendly name wraps to its own line under the id */
+/* readonly friendly-name box (right of Fetch): displays the picked library's name and carries
+   it on submit. Only meaningful for discovery-capable servers, so hidden otherwise. */
+.nf-library-name { display: none; color: var(--muted); background: var(--inset); cursor: default; }
+.nf-row .nf-library input.nf-library-name { flex: 0 1 9rem; }
+.folder-editor[data-library-discovery="true"] .nf-library-name { display: inline-block; }
 .nf-row .folder-on { grid-area: on; }
 .nf-row .nf-remove { grid-area: rm; justify-self: end; }
 .nf-head span:nth-child(1) { text-align: center; } /* "On" header centered over its checkbox */
 /* Extensions own a full-width row: an eyebrow label stacked over a field whose left edge lines
    up with the path/library inputs above (an inline label would push the field rightward). */
 .nf-row .nf-ext { grid-area: ext; display: flex; flex-direction: column; gap: 0.3rem; }
-.nf-ext-label {
-  font: 600 0.64rem var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
-}
 .nf-row .nf-ext .ext-field { width: 100%; }
-.nf-head {
+.nf-head {  /* typography from the shared .field-label group above */
   padding: 0 0 0.45rem;
-  font: 600 0.64rem var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
   border-bottom: 1px solid var(--line);
 }
 .nf-row { padding: 0.55rem 0; border-bottom: 1px solid var(--line-2); }

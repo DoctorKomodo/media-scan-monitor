@@ -20,9 +20,9 @@
       <div class="nf-library" data-library-field>
         <input type="text" class="nf-library-id" name="folder-{{ loop.index0 }}-library_id"
                value="{{ f.library_id or '' }}" placeholder="—" aria-label="Library id">
-        <input type="hidden" name="folder-{{ loop.index0 }}-library_name" value="{{ f.library_name or '' }}">
         <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
-        {% if f.library_name %}<span class="nf-library-name">{{ f.library_name }}</span>{% endif %}
+        <input type="text" class="nf-library-name" name="folder-{{ loop.index0 }}-library_name"
+               value="{{ f.library_name or '' }}" readonly tabindex="-1" aria-label="Library name" placeholder="library name">
       </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
@@ -40,8 +40,9 @@
       <div class="nf-library" data-library-field>
         <input type="text" class="nf-library-id" name="folder-0-library_id"
                placeholder="—" aria-label="Library id">
-        <input type="hidden" name="folder-0-library_name" value="">
         <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
+        <input type="text" class="nf-library-name" name="folder-0-library_name"
+               value="" readonly tabindex="-1" aria-label="Library name" placeholder="library name">
       </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
@@ -62,8 +63,9 @@
       <div class="nf-library" data-library-field>
         <input type="text" class="nf-library-id" name="folder-__I__-library_id"
                placeholder="—" aria-label="Library id">
-        <input type="hidden" name="folder-__I__-library_name" value="">
         <button type="button" class="nf-fetch-lib" data-fetch-lib>Fetch</button>
+        <input type="text" class="nf-library-name" name="folder-__I__-library_name"
+               value="" readonly tabindex="-1" aria-label="Library name" placeholder="library name">
       </div>
       <div class="nf-ext" data-ext-editor>
         <span class="nf-ext-label" aria-hidden="true">Extensions</span>
