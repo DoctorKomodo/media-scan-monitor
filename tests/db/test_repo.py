@@ -273,3 +273,37 @@ def test_update_server_with_folders_persists_library_name(repo: Repo) -> None:
     )
     [folder] = repo.list_folders(server.id)
     assert (folder.library_id, folder.library_name) == ("lib_y", "Podcasts")
+
+
+def test_create_server_persists_webhook_payload_preset(repo: Repo) -> None:
+    from mediascanmonitor.db.models import WebhookPreset
+    from mediascanmonitor.db.schemas import ServerCreate as SC
+
+    created = repo.create_server(
+        SC(
+            name="hook-sr",
+            type=ServerType.webhook,
+            webhook_payload_preset=WebhookPreset.sonarr_radarr,
+        )
+    )
+    assert created.id is not None
+    assert repo.get_server(created.id).webhook_payload_preset == WebhookPreset.sonarr_radarr
+
+
+def test_create_server_defaults_preset_to_custom(repo: Repo) -> None:
+    from mediascanmonitor.db.models import WebhookPreset
+    from mediascanmonitor.db.schemas import ServerCreate as SC
+
+    created = repo.create_server(SC(name="hook-default", type=ServerType.webhook))
+    assert created.id is not None
+    assert repo.get_server(created.id).webhook_payload_preset == WebhookPreset.custom
+
+
+def test_update_server_changes_preset(repo: Repo) -> None:
+    from mediascanmonitor.db.models import WebhookPreset
+    from mediascanmonitor.db.schemas import ServerCreate as SC
+
+    created = repo.create_server(SC(name="hook-upd", type=ServerType.webhook))
+    assert created.id is not None
+    repo.update_server(created.id, ServerUpdate(webhook_payload_preset=WebhookPreset.sonarr_radarr))
+    assert repo.get_server(created.id).webhook_payload_preset == WebhookPreset.sonarr_radarr

@@ -70,6 +70,7 @@ class Repo:
                 webhook_method=data.webhook_method,
                 webhook_headers_json=data.webhook_headers_json,
                 webhook_body_template=data.webhook_body_template,
+                webhook_payload_preset=data.webhook_payload_preset,
             )
             session.add(server)
             session.commit()
@@ -119,6 +120,7 @@ class Repo:
                 webhook_method=server_data.webhook_method,
                 webhook_headers_json=server_data.webhook_headers_json,
                 webhook_body_template=server_data.webhook_body_template,
+                webhook_payload_preset=server_data.webhook_payload_preset,
             )
             _set_server_folders(server, folders)
             session.add(server)

@@ -9,7 +9,7 @@ import os
 
 from pydantic import BaseModel, Field, field_validator
 
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 
@@ -30,6 +30,7 @@ class ServerCreate(BaseModel):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
+    webhook_payload_preset: WebhookPreset = WebhookPreset.custom
 
 
 class ServerUpdate(BaseModel):
@@ -50,6 +51,7 @@ class ServerUpdate(BaseModel):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
+    webhook_payload_preset: WebhookPreset | None = None
 
 
 class FolderCreate(BaseModel):
