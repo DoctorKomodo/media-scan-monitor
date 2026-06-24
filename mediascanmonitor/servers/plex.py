@@ -17,6 +17,13 @@ PLEX API QUIRKS (kept here so the watcher/pipeline never special-case Plex):
 
 * Success: Plex answers 2xx (usually 200, empty body) and scans asynchronously.
   We treat any 2xx as ok; there is no per-item completion signal to await.
+
+* Library discovery:
+    GET {base_url}/library/sections   (Accept: application/json)
+  Plex defaults to XML, so we send ``Accept: application/json`` to get
+  ``MediaContainer.Directory[]`` where each entry's ``key`` is the section id
+  (the same value used in the refresh URL above) and ``title`` is the name. A
+  server with no libraries omits ``Directory`` entirely.
 ------------------------------------------------------------------------------
 """
 
@@ -24,12 +31,33 @@ from typing import ClassVar
 from urllib.parse import quote
 
 import httpx
+from pydantic import BaseModel, Field
 
 from mediascanmonitor.db.models import ScanMode, ServerType
 from mediascanmonitor.pipeline.events import ScanRequest
-from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
+from mediascanmonitor.servers.base import (
+    LibraryListResult,
+    LibraryOption,
+    ServerAdapter,
+    TestResult,
+    TriggerResult,
+)
 from mediascanmonitor.servers.http import request_with_retry
 from mediascanmonitor.servers.registry import register
+
+
+class _PlexSection(BaseModel):
+    key: str
+    title: str
+
+
+class _PlexMediaContainer(BaseModel):
+    # A server with no libraries omits Directory entirely.
+    directory: list[_PlexSection] = Field(default_factory=list, alias="Directory")
+
+
+class _PlexSectionsResponse(BaseModel):
+    media_container: _PlexMediaContainer = Field(alias="MediaContainer")
 
 
 @register
@@ -38,6 +66,7 @@ class PlexAdapter(ServerAdapter):
     supported_scan_modes: ClassVar[frozenset[ScanMode]] = frozenset(
         {ScanMode.targeted, ScanMode.library}
     )
+    supports_library_discovery: ClassVar[bool] = True
 
     def _headers(self) -> dict[str, str]:
         # Token in header only — never in the URL (keeps it out of logs).
@@ -78,3 +107,27 @@ class PlexAdapter(ServerAdapter):
         if resp.is_success:
             return TestResult(ok=True, detail="reachable")
         return TestResult(ok=False, detail=f"HTTP {resp.status_code}")
+
+    async def list_libraries(self) -> LibraryListResult:
+        base = self.server.base_url.rstrip("/")
+        url = f"{base}/library/sections"
+        # Plex defaults to XML; ask for JSON explicitly.
+        headers = {**self._headers(), "Accept": "application/json"}
+        try:
+            resp = await request_with_retry(self.client, "GET", url, attempts=1, headers=headers)
+        except httpx.HTTPError as exc:
+            return LibraryListResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
+        if not resp.is_success:
+            return LibraryListResult(ok=False, detail=f"HTTP {resp.status_code}")
+        try:
+            parsed = _PlexSectionsResponse.model_validate(resp.json())
+        except ValueError:
+            # covers httpx's json.JSONDecodeError (a ValueError) and Pydantic ValidationError.
+            return LibraryListResult(ok=False, detail="unexpected response from Plex")
+        return LibraryListResult(
+            ok=True,
+            detail="",
+            libraries=tuple(
+                LibraryOption(id=s.key, name=s.title) for s in parsed.media_container.directory
+            ),
+        )

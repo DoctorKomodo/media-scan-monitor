@@ -13,6 +13,7 @@ from .conftest import make_plex_runtime, make_scan_request
 BASE = "https://plex.example:32400"
 REFRESH = f"{BASE}/library/sections/2/refresh"
 IDENTITY = f"{BASE}/identity"
+SECTIONS = f"{BASE}/library/sections"
 
 
 def test_plex_class_metadata() -> None:
@@ -130,3 +131,94 @@ async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
+
+
+def test_plex_supports_library_discovery() -> None:
+    assert PlexAdapter.supports_library_discovery is True
+
+
+@respx.mock
+async def test_list_libraries_parses_key_and_title(client: httpx.AsyncClient) -> None:
+    respx.get(SECTIONS).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "MediaContainer": {
+                    "size": 2,
+                    "Directory": [
+                        {"key": "2", "title": "Movies", "type": "movie"},
+                        {"key": "5", "title": "TV Shows", "type": "show"},
+                    ],
+                }
+            },
+        )
+    )
+    adapter = PlexAdapter(make_plex_runtime(secret="tok"), client)
+    result = await adapter.list_libraries()
+    assert result.ok is True
+    assert [(o.id, o.name) for o in result.libraries] == [
+        ("2", "Movies"),
+        ("5", "TV Shows"),
+    ]
+
+
+@respx.mock
+async def test_list_libraries_sends_token_header_and_accept_json(
+    client: httpx.AsyncClient,
+) -> None:
+    route = respx.get(SECTIONS).mock(
+        return_value=httpx.Response(200, json={"MediaContainer": {"Directory": []}})
+    )
+    adapter = PlexAdapter(make_plex_runtime(secret="tok-secret"), client)
+    await adapter.list_libraries()
+    request = route.calls.last.request
+    # Plex defaults to XML; we must ask for JSON.
+    assert request.headers["Accept"] == "application/json"
+    # token in header only, never in the URL.
+    assert request.headers["X-Plex-Token"] == "tok-secret"
+    assert "tok-secret" not in str(request.url)
+
+
+@respx.mock
+async def test_list_libraries_empty_server_has_no_directory_key(
+    client: httpx.AsyncClient,
+) -> None:
+    # A server with no libraries omits Directory entirely.
+    respx.get(SECTIONS).mock(return_value=httpx.Response(200, json={"MediaContainer": {"size": 0}}))
+    result = await PlexAdapter(make_plex_runtime(), client).list_libraries()
+    assert result.ok is True
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_401_to_error(client: httpx.AsyncClient) -> None:
+    respx.get(SECTIONS).mock(return_value=httpx.Response(401))
+    result = await PlexAdapter(make_plex_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "HTTP 401"
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_connection_error(client: httpx.AsyncClient) -> None:
+    respx.get(SECTIONS).mock(side_effect=httpx.ConnectError("boom"))
+    result = await PlexAdapter(make_plex_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail.startswith("ConnectError")
+
+
+@respx.mock
+async def test_list_libraries_maps_garbage_body(client: httpx.AsyncClient) -> None:
+    respx.get(SECTIONS).mock(return_value=httpx.Response(200, text="<xml>not json</xml>"))
+    result = await PlexAdapter(make_plex_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "unexpected response from Plex"
+
+
+@respx.mock
+async def test_list_libraries_maps_missing_media_container(client: httpx.AsyncClient) -> None:
+    # Valid JSON, but the MediaContainer envelope is absent (e.g. an error body).
+    respx.get(SECTIONS).mock(return_value=httpx.Response(200, json={}))
+    result = await PlexAdapter(make_plex_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "unexpected response from Plex"
