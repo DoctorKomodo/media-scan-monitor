@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 
 from mediascanmonitor.config.runtime import FolderRoute, RuntimeConfig, ServerRuntime
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 
 
 def make_server_runtime(
@@ -28,6 +28,7 @@ def make_server_runtime(
         webhook_method=None,
         webhook_headers_json=None,
         webhook_body_template=None,
+        webhook_payload_preset=WebhookPreset.custom,
     )
 
 

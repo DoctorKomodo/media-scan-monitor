@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable
 import httpx
 
 from mediascanmonitor.config.runtime import FolderRoute, RuntimeConfig, ServerRuntime
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.pipeline.events import ScanRequest
 from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
 
@@ -79,6 +79,7 @@ def make_server_runtime(
         webhook_method=None,
         webhook_headers_json=None,
         webhook_body_template=None,
+        webhook_payload_preset=WebhookPreset.custom,
     )
 
 
