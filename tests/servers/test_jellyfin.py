@@ -16,6 +16,7 @@ from .conftest import make_scan_request
 BASE = "https://jellyfin.example:8096"
 REFRESH = f"{BASE}/Items/7/Refresh"
 INFO = f"{BASE}/System/Info"
+VFOLDERS = f"{BASE}/Library/VirtualFolders"
 
 
 def jf_runtime(*, secret: str | None = "tok-secret", retry_attempts: int = 1) -> ServerRuntime:
@@ -102,3 +103,68 @@ async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
+
+
+def test_jellyfin_supports_library_discovery() -> None:
+    assert JellyfinAdapter.supports_library_discovery is True
+
+
+@respx.mock
+async def test_list_libraries_parses_name_and_itemid(client: httpx.AsyncClient) -> None:
+    # /Library/VirtualFolders returns a top-level array of VirtualFolderInfo.
+    respx.get(VFOLDERS).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"Name": "Movies", "ItemId": "7", "CollectionType": "movies"},
+                {"Name": "Music", "ItemId": "11", "Locations": ["/data/music"]},
+            ],
+        )
+    )
+    adapter = JellyfinAdapter(jf_runtime(secret="tok"), client)
+    result = await adapter.list_libraries()
+    assert result.ok is True
+    assert [(o.id, o.name) for o in result.libraries] == [("7", "Movies"), ("11", "Music")]
+
+
+@respx.mock
+async def test_list_libraries_sends_mediabrowser_auth(client: httpx.AsyncClient) -> None:
+    route = respx.get(VFOLDERS).mock(return_value=httpx.Response(200, json=[]))
+    adapter = JellyfinAdapter(jf_runtime(secret="tok-secret"), client)
+    await adapter.list_libraries()
+    request = route.calls.last.request
+    assert request.headers["Authorization"] == 'MediaBrowser Token="tok-secret"'
+    assert "tok-secret" not in str(request.url)
+
+
+@respx.mock
+async def test_list_libraries_empty_array_is_ok(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(200, json=[]))
+    result = await JellyfinAdapter(jf_runtime(), client).list_libraries()
+    assert result.ok is True
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_401_to_error(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(401))
+    result = await JellyfinAdapter(jf_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "HTTP 401"
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_connection_error(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(side_effect=httpx.ConnectError("boom"))
+    result = await JellyfinAdapter(jf_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail.startswith("ConnectError")
+
+
+@respx.mock
+async def test_list_libraries_maps_garbage_body(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(200, text="not json"))
+    result = await JellyfinAdapter(jf_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "unexpected response from Jellyfin"

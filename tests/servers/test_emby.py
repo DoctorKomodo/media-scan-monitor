@@ -16,6 +16,7 @@ from .conftest import make_scan_request
 BASE = "https://emby.example:8096"
 REFRESH = f"{BASE}/Items/5/Refresh"
 INFO = f"{BASE}/System/Info"
+VFOLDERS = f"{BASE}/Library/VirtualFolders"
 
 
 def emby_runtime(*, secret: str | None = "tok-secret", retry_attempts: int = 1) -> ServerRuntime:
@@ -108,3 +109,68 @@ async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
+
+
+def test_emby_supports_library_discovery() -> None:
+    assert EmbyAdapter.supports_library_discovery is True
+
+
+@respx.mock
+async def test_list_libraries_parses_name_and_itemid(client: httpx.AsyncClient) -> None:
+    # /Library/VirtualFolders returns a top-level array of VirtualFolderInfo.
+    respx.get(VFOLDERS).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"Name": "Movies", "ItemId": "5", "CollectionType": "movies"},
+                {"Name": "Shows", "ItemId": "9", "Locations": ["/data/tv"]},
+            ],
+        )
+    )
+    adapter = EmbyAdapter(emby_runtime(secret="tok"), client)
+    result = await adapter.list_libraries()
+    assert result.ok is True
+    assert [(o.id, o.name) for o in result.libraries] == [("5", "Movies"), ("9", "Shows")]
+
+
+@respx.mock
+async def test_list_libraries_sends_token_header(client: httpx.AsyncClient) -> None:
+    route = respx.get(VFOLDERS).mock(return_value=httpx.Response(200, json=[]))
+    adapter = EmbyAdapter(emby_runtime(secret="tok-secret"), client)
+    await adapter.list_libraries()
+    request = route.calls.last.request
+    assert request.headers["X-Emby-Token"] == "tok-secret"
+    assert "tok-secret" not in str(request.url)
+
+
+@respx.mock
+async def test_list_libraries_empty_array_is_ok(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(200, json=[]))
+    result = await EmbyAdapter(emby_runtime(), client).list_libraries()
+    assert result.ok is True
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_401_to_error(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(401))
+    result = await EmbyAdapter(emby_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "HTTP 401"
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_connection_error(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(side_effect=httpx.ConnectError("boom"))
+    result = await EmbyAdapter(emby_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail.startswith("ConnectError")
+
+
+@respx.mock
+async def test_list_libraries_maps_garbage_body(client: httpx.AsyncClient) -> None:
+    respx.get(VFOLDERS).mock(return_value=httpx.Response(200, text="not json"))
+    result = await EmbyAdapter(emby_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "unexpected response from Emby"

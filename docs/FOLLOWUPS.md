@@ -10,12 +10,6 @@ Add a pointer here when you defer something to a later phase; **remove the item 
 
 - [ ] Dashboard/events **live-refresh** polish (poll `/api/status`, htmx SSE extension) — baseline
       ships server-rendered status + a plain `EventSource` feed. → phase3-04 dashboard plan
-- [ ] `library_id` discovery for **Emby / Jellyfin** — the general capability + picker UI
-      shipped for Audiobookshelf (2026-06-24-library-discovery) and **Plex**
-      (`GET /library/sections` → `MediaContainer.Directory[].{key,title}`). Each remaining
-      backend = flip `supports_library_discovery` + implement `list_libraries()` (Emby/Jellyfin
-      `GET /Library/VirtualFolders` → `{Name,ItemId}`; verify at implement-time).
-      → docs/superpowers/specs/2026-06-23-library-discovery-design.md
 - [ ] Folder picker assumes **one folder editor per page**: `_folder_picker.html` is included inside
       `_folder_editor.html` (so the `<dialog>` / `id="fs-listing"` would duplicate if a second editor
       ever rendered), while the picker JS binds all `[data-folder-editor]` to a single shared dialog.
