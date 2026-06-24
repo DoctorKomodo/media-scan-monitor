@@ -958,9 +958,7 @@ body.auth .error { width: 100%; max-width: 380px; margin: 0; }
 .picker-ready .nf-browse {
   display: inline-flex;
   flex: 0 0 auto;
-  font: 600 0.62rem var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  font: 600 0.78rem var(--sans);
   padding: 0.34rem 0.55rem;
   margin: 0;
   color: var(--signal);
