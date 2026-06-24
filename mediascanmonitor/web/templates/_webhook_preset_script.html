@@ -1,0 +1,14 @@
+<script>
+  // When a non-Custom payload preset is selected, the body template is ignored — hide it.
+  // No-JS users still see the textarea; the server ignores it whenever a preset is active.
+  (function () {
+    const sel = document.getElementById("webhook-preset-select");
+    const body = document.querySelector(".field-webhook-body");
+    if (!sel || !body) return;
+    function apply() {
+      body.style.display = sel.value === "custom" ? "" : "none";
+    }
+    sel.addEventListener("change", apply);
+    apply();
+  })();
+</script>
