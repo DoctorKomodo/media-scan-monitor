@@ -34,7 +34,12 @@ def _set_server_folders(server: Server, folders: list[FolderCreate]) -> None:
     """
     server.folders.clear()
     for data in folders:
-        folder = Folder(path=data.path, library_id=data.library_id, enabled=data.enabled)
+        folder = Folder(
+            path=data.path,
+            library_id=data.library_id,
+            library_name=data.library_name,
+            enabled=data.enabled,
+        )
         for ext in data.extensions:
             folder.filetypes.append(FileType(extension=ext))
         server.folders.append(folder)
@@ -175,6 +180,7 @@ class Repo:
                 server_id=server_id,
                 path=data.path,
                 library_id=data.library_id,
+                library_name=data.library_name,
                 enabled=data.enabled,
             )
             for ext in data.extensions:

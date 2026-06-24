@@ -37,6 +37,7 @@
     const form = document.getElementById("add-server");
     const typeSel = document.getElementById("type-select");
     const modeSel = document.getElementById("scan-mode-select");
+    const editor = form.querySelector("[data-folder-editor]");
     function apply() {
       const spec = specs[typeSel.value] || {};
       form.querySelector(".field-secret").style.display = spec.requires_secret ? "" : "none";
@@ -47,6 +48,9 @@
       for (const m of modes) {
         const opt = document.createElement("option");
         opt.value = m; opt.textContent = m; modeSel.appendChild(opt);
+      }
+      if (editor) {
+        editor.dataset.libraryDiscovery = spec.supports_library_discovery ? "true" : "false";
       }
     }
     typeSel.addEventListener("change", apply);

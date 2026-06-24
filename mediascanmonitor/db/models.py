@@ -62,6 +62,7 @@ class Folder(SQLModel, table=True):
     server_id: int = Field(foreign_key="server.id", ondelete="CASCADE", index=True)
     path: str  # host path watched, e.g. /data/media/tvseries
     library_id: str | None = None  # backend section/library id; None for webhook
+    library_name: str | None = None  # human label for library_id; display-only, set via the picker
     enabled: bool = True
     server: Server = Relationship(back_populates="folders")
     filetypes: list[FileType] = Relationship(

@@ -167,3 +167,33 @@ def test_folder_picker_present_on_new_and_detail(auth_client: httpx.Client, repo
         assert "data-folder-picker" in body  # the shared dialog shell
         assert 'id="fs-listing"' in body  # the htmx swap target inside the dialog
         assert "data-picker-select" in body  # the Select control
+
+
+def test_new_page_exposes_discovery_in_type_specs(auth_client: httpx.Client) -> None:
+    body = auth_client.get("/servers/new").text
+    assert "supports_library_discovery" in body  # serialized into #type-specs for the per-type JS
+    assert "data-fetch-lib" in body  # the Fetch button is always rendered (JS/CSS gate visibility)
+
+
+def test_abs_detail_flags_library_discovery_on(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    server = repo.create_server(
+        ServerCreate(
+            name="ABS", type=ServerType.audiobookshelf, base_url="http://abs:13378", secret="t"
+        )
+    )
+    repo.create_folder(
+        server.id,
+        FolderCreate(
+            path="/data/abs", library_id="lib_x", library_name="Audiobooks", extensions=["m4b"]
+        ),
+    )
+    body = auth_client.get(f"/servers/{server.id}").text
+    assert 'data-library-discovery="true"' in body
+    assert "data-fetch-lib" in body
+    assert "Audiobooks" in body  # the saved friendly name renders as the companion label
+
+
+def test_webhook_detail_flags_library_discovery_off(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
+    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook))
+    body = auth_client.get(f"/servers/{hook.id}").text
+    assert 'data-library-discovery="false"' in body

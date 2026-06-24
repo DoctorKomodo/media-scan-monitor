@@ -1,0 +1,16 @@
+{# Library picker dialog — one shared instance per page (one folder editor per page, same
+   assumption as _folder_picker.html). Reuses the .fs-dialog* chrome. Opened per row by the
+   library-picker JS in _folder_rows_script.html, which POSTs the server form to the row's
+   data-library-endpoint, swaps options into #library-listing, and writes the chosen id + name
+   back on Select. #}
+<dialog class="fs-dialog" data-library-picker aria-label="Choose a library">
+  <div class="fs-dialog-head">
+    <h2>Choose a library</h2>
+    <button type="button" class="fs-close" data-library-close aria-label="Close">&times;</button>
+  </div>
+  <div id="library-listing" class="lib-listing"></div>
+  <div class="fs-dialog-foot">
+    <button type="button" class="fs-cancel" data-library-close>Cancel</button>
+    <button type="button" class="fs-select" data-library-pick disabled>Select</button>
+  </div>
+</dialog>

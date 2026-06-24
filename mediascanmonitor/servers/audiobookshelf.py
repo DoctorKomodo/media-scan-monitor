@@ -18,25 +18,43 @@ AUDIOBOOKSHELF API QUIRKS (kept here so the watcher/pipeline never special-case 
 * test(): GET {base_url}/api/me with the token proves auth + reachability.
 
 VERIFY AT IMPLEMENT-TIME (CLAUDE.md rule 1): confirm the scan path, the /api/me
-probe, the Bearer scheme, and the force-flag default against current ABS API docs.
+probe, the Bearer scheme, the force-flag default, and the GET /api/libraries path
+(libraries[].{id,name} response shape) against current ABS API docs.
 ------------------------------------------------------------------------------
 """
 
 from typing import ClassVar
 
 import httpx
+from pydantic import BaseModel
 
 from mediascanmonitor.db.models import ScanMode, ServerType
 from mediascanmonitor.pipeline.events import ScanRequest
-from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
+from mediascanmonitor.servers.base import (
+    LibraryListResult,
+    LibraryOption,
+    ServerAdapter,
+    TestResult,
+    TriggerResult,
+)
 from mediascanmonitor.servers.http import request_with_retry
 from mediascanmonitor.servers.registry import register
+
+
+class _AbsLibrary(BaseModel):
+    id: str
+    name: str
+
+
+class _AbsLibrariesResponse(BaseModel):
+    libraries: list[_AbsLibrary]
 
 
 @register
 class AudiobookshelfAdapter(ServerAdapter):
     server_type: ClassVar[ServerType] = ServerType.audiobookshelf
     supported_scan_modes: ClassVar[frozenset[ScanMode]] = frozenset({ScanMode.library})
+    supports_library_discovery: ClassVar[bool] = True
 
     def _headers(self) -> dict[str, str]:
         # Bearer token in header only — never in the URL (keeps it out of logs).
@@ -75,3 +93,25 @@ class AudiobookshelfAdapter(ServerAdapter):
         if resp.is_success:
             return TestResult(ok=True, detail="reachable")
         return TestResult(ok=False, detail=f"HTTP {resp.status_code}")
+
+    async def list_libraries(self) -> LibraryListResult:
+        base = self.server.base_url.rstrip("/")
+        url = f"{base}/api/libraries"
+        try:
+            resp = await request_with_retry(
+                self.client, "GET", url, attempts=1, headers=self._headers()
+            )
+        except httpx.HTTPError as exc:
+            return LibraryListResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
+        if not resp.is_success:
+            return LibraryListResult(ok=False, detail=f"HTTP {resp.status_code}")
+        try:
+            parsed = _AbsLibrariesResponse.model_validate(resp.json())
+        except ValueError:
+            # covers httpx's json.JSONDecodeError (a ValueError) and Pydantic ValidationError.
+            return LibraryListResult(ok=False, detail="unexpected response from Audiobookshelf")
+        return LibraryListResult(
+            ok=True,
+            detail="",
+            libraries=tuple(LibraryOption(id=lib.id, name=lib.name) for lib in parsed.libraries),
+        )

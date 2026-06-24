@@ -55,6 +55,7 @@ class ServerUpdate(BaseModel):
 class FolderCreate(BaseModel):
     path: str
     library_id: str | None = None
+    library_name: str | None = None
     extensions: list[str] = Field(default_factory=list)
     enabled: bool = True
 

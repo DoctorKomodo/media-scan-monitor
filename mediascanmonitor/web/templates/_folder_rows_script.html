@@ -288,3 +288,58 @@
     }
   })();
 </script>
+<script>
+  // Library picker: per-row Fetch posts the server form to the row's data-library-endpoint
+  // (unsaved /ui/servers/libraries on the new page, /ui/servers/{id}/libraries on detail),
+  // swaps options into the shared dialog, and writes the chosen id + name back on Select.
+  // Progressive enhancement: adds .lib-picker-ready so the CSS-hidden Fetch buttons appear
+  // only when JS is present AND the editor's type supports discovery. No JS → free-text id.
+  (function () {
+    const dialog = document.querySelector("[data-library-picker]");
+    const listing = document.getElementById("library-listing");
+    if (!dialog || !listing || typeof dialog.showModal !== "function") return;
+
+    const pick = dialog.querySelector("[data-library-pick]");
+    let targetRow = null;
+
+    for (const editor of document.querySelectorAll("[data-folder-editor]")) {
+      editor.classList.add("lib-picker-ready"); // reveals Fetch (gated also on data-library-discovery)
+      editor.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-fetch-lib]");
+        if (!btn) return;
+        targetRow = btn.closest("[data-folder-row]");
+        pick.disabled = true;
+        listing.innerHTML = '<p class="muted">Loading…</p>';
+        dialog.showModal();
+        htmx.ajax("POST", editor.dataset.libraryEndpoint, {
+          target: "#library-listing",
+          swap: "innerHTML",
+          source: btn, // includes the enclosing server form's fields (type, base_url, secret, …)
+        });
+      });
+    }
+
+    // Enable Select only once a library radio is chosen.
+    listing.addEventListener("change", () => {
+      pick.disabled = !listing.querySelector('input[name="lib-choice"]:checked');
+    });
+
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog || event.target.closest("[data-library-close]")) {
+        dialog.close();
+        return;
+      }
+      if (event.target.closest("[data-library-pick]")) {
+        const chosen = listing.querySelector('input[name="lib-choice"]:checked');
+        if (chosen && targetRow) {
+          targetRow.querySelector('input[name$="-library_id"]').value = chosen.value;
+          // The readonly .nf-library-name box both displays the name and carries it on submit,
+          // so setting its value updates the visible label immediately (no reload needed).
+          const nameInput = targetRow.querySelector('input[name$="-library_name"]');
+          if (nameInput) nameInput.value = chosen.dataset.libName || "";
+          dialog.close();
+        }
+      }
+    });
+  })();
+</script>

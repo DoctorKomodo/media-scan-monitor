@@ -16,7 +16,7 @@ from mediascanmonitor.db.schemas import ServerCreate, ServerUpdate
 from mediascanmonitor.engine import Engine
 from mediascanmonitor.web.api_schemas import ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import get_engine, get_repo, require_api_auth
-from mediascanmonitor.web.servertest import run_connectivity_test, runtime_from_server
+from mediascanmonitor.web.serverprobe import run_connectivity_test, runtime_from_server
 from mediascanmonitor.web.writes import (
     apply_server_create,
     apply_server_delete,

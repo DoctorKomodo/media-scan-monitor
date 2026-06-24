@@ -7,6 +7,7 @@ import pytest
 
 from mediascanmonitor.db.models import ScanMode, ServerType
 from mediascanmonitor.pipeline.events import ScanRequest
+from mediascanmonitor.servers import registry
 from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
 
 from .conftest import make_plex_runtime
@@ -52,3 +53,16 @@ async def test_concrete_subclass_stores_server_and_client(
     assert adapter.server is runtime
     assert adapter.client is client
     assert _Dummy.supported_scan_modes == frozenset({ScanMode.targeted})
+
+
+async def test_default_list_libraries_is_unsupported(client: httpx.AsyncClient) -> None:
+    # The webhook adapter does not override list_libraries(), so it inherits the ABC default.
+    runtime = make_plex_runtime(
+        type=ServerType.webhook, base_url="", scan_mode=ScanMode.library, secret=None
+    )
+    adapter = registry.create_adapter(runtime, client)
+    assert adapter.supports_library_discovery is False
+    result = await adapter.list_libraries()
+    assert result.ok is False
+    assert result.detail == "not supported"
+    assert result.libraries == ()

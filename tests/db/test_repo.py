@@ -242,3 +242,34 @@ def test_set_filetypes_unknown_folder_raises(repo: Repo) -> None:
 def test_delete_missing_is_idempotent(repo: Repo) -> None:
     repo.delete_server(9999)  # no raise
     repo.delete_folder(9999)  # no raise
+
+
+def test_create_folder_persists_library_name(repo: Repo) -> None:
+    server = repo.create_server(make_server())
+    assert server.id is not None
+    repo.create_folder(
+        server.id,
+        FolderCreate(path="/data/abs", library_id="lib_x", library_name="Audiobooks"),
+    )
+    [folder] = repo.list_folders(server.id)
+    assert (folder.library_id, folder.library_name) == ("lib_x", "Audiobooks")
+
+
+def test_create_folder_defaults_library_name_to_none(repo: Repo) -> None:
+    server = repo.create_server(make_server())
+    assert server.id is not None
+    repo.create_folder(server.id, FolderCreate(path="/data/tv", library_id="2"))
+    [folder] = repo.list_folders(server.id)
+    assert folder.library_name is None
+
+
+def test_update_server_with_folders_persists_library_name(repo: Repo) -> None:
+    server = repo.create_server_with_folders(make_server(name="abs"), [])
+    assert server.id is not None
+    repo.update_server_with_folders(
+        server.id,
+        ServerUpdate(),
+        [FolderCreate(path="/data/pods", library_id="lib_y", library_name="Podcasts")],
+    )
+    [folder] = repo.list_folders(server.id)
+    assert (folder.library_id, folder.library_name) == ("lib_y", "Podcasts")

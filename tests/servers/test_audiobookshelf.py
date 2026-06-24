@@ -16,6 +16,7 @@ from .conftest import make_scan_request
 BASE = "https://abs.example:13378"
 SCAN = f"{BASE}/api/libraries/lib_abc/scan"
 ME = f"{BASE}/api/me"
+LIBRARIES = f"{BASE}/api/libraries"
 
 
 def abs_runtime(*, secret: str | None = "tok-secret", retry_attempts: int = 1) -> ServerRuntime:
@@ -107,3 +108,62 @@ async def test_test_auth_failure_is_not_ok(client: httpx.AsyncClient) -> None:
     res = await adapter.test()
     assert res.ok is False
     assert "401" in res.detail
+
+
+@respx.mock
+async def test_list_libraries_parses_id_and_name(client: httpx.AsyncClient) -> None:
+    respx.get(LIBRARIES).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "libraries": [
+                    {"id": "lib_abc", "name": "Audiobooks", "mediaType": "book"},
+                    {"id": "lib_def", "name": "Podcasts"},
+                ]
+            },
+        )
+    )
+    adapter = AudiobookshelfAdapter(abs_runtime(secret="tok"), client)
+    result = await adapter.list_libraries()
+    assert result.ok is True
+    assert [(o.id, o.name) for o in result.libraries] == [
+        ("lib_abc", "Audiobooks"),
+        ("lib_def", "Podcasts"),
+    ]
+
+
+@respx.mock
+async def test_list_libraries_sends_bearer_header(client: httpx.AsyncClient) -> None:
+    route = respx.get(LIBRARIES).mock(return_value=httpx.Response(200, json={"libraries": []}))
+    adapter = AudiobookshelfAdapter(abs_runtime(secret="tok-secret"), client)
+    await adapter.list_libraries()
+    assert route.calls.last.request.headers["Authorization"] == "Bearer tok-secret"
+
+
+@respx.mock
+async def test_list_libraries_maps_401_to_error(client: httpx.AsyncClient) -> None:
+    respx.get(LIBRARIES).mock(return_value=httpx.Response(401))
+    result = await AudiobookshelfAdapter(abs_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "HTTP 401"
+    assert result.libraries == ()
+
+
+@respx.mock
+async def test_list_libraries_maps_connection_error(client: httpx.AsyncClient) -> None:
+    respx.get(LIBRARIES).mock(side_effect=httpx.ConnectError("boom"))
+    result = await AudiobookshelfAdapter(abs_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail.startswith("ConnectError")
+
+
+@respx.mock
+async def test_list_libraries_maps_garbage_body(client: httpx.AsyncClient) -> None:
+    respx.get(LIBRARIES).mock(return_value=httpx.Response(200, text="not json"))
+    result = await AudiobookshelfAdapter(abs_runtime(), client).list_libraries()
+    assert result.ok is False
+    assert result.detail == "unexpected response from Audiobookshelf"
+
+
+def test_abs_supports_library_discovery() -> None:
+    assert AudiobookshelfAdapter.supports_library_discovery is True
