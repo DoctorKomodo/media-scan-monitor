@@ -204,3 +204,18 @@ def test_webhook_detail_flags_library_discovery_off(auth_client: httpx.Client, r
     hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook))
     body = auth_client.get(f"/servers/{hook.id}").text
     assert 'data-library-discovery="false"' in body
+
+
+def test_server_read_carries_webhook_payload_preset(repo) -> None:  # type: ignore[no-untyped-def]
+    from mediascanmonitor.db.models import WebhookPreset
+    from mediascanmonitor.web.api_schemas import ServerRead
+
+    server = repo.create_server(
+        ServerCreate(
+            name="hook-read",
+            type=ServerType.webhook,
+            webhook_payload_preset=WebhookPreset.sonarr_radarr,
+        )
+    )
+    read = ServerRead.from_model(server, [])
+    assert read.webhook_payload_preset == WebhookPreset.sonarr_radarr
