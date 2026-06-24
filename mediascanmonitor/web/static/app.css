@@ -673,8 +673,10 @@ pre code { border: 0; background: none; padding: 0; }
   row-gap: 0.7rem;
 }
 .nf-row .nf-path { grid-area: path; }
-.nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-.nf-library-id { flex: 1 1 auto; min-width: 0; }
+.nf-row .nf-library { grid-area: lib; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-width: 0; }
+/* width:auto + the element selector beat the global `.nf-row input[type=text]{width:100%}`,
+   so the id shares its line with Fetch instead of pushing it to wrap — mirrors .nf-path/Browse. */
+.nf-row .nf-library input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; }
 .nf-library-name { flex: 1 0 100%; font: 0.78rem/1.4 var(--sans); color: var(--muted); }  /* friendly name wraps to its own line under the id */
 .nf-row .folder-on { grid-area: on; }
 .nf-row .nf-remove { grid-area: rm; justify-self: end; }
