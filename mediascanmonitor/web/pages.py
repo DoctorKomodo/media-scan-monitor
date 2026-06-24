@@ -365,6 +365,7 @@ async def ui_create_server_with_folders(
     webhook_method: str = Form(""),
     webhook_headers_json: str = Form(""),
     webhook_body_template: str = Form(""),
+    webhook_payload_preset: str = Form("custom"),
     repo: Repo = Depends(get_repo),
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
@@ -389,6 +390,7 @@ async def ui_create_server_with_folders(
             webhook_method=webhook_method or None,
             webhook_headers_json=webhook_headers_json or None,
             webhook_body_template=webhook_body_template or None,
+            webhook_payload_preset=webhook_payload_preset,
         )
         folders = _parse_folder_rows(form)
         server = await apply_server_create_with_folders(repo, engine, server_data, folders)
@@ -431,6 +433,7 @@ async def ui_test_server_config(
     webhook_method: str = Form(""),
     webhook_headers_json: str = Form(""),
     webhook_body_template: str = Form(""),
+    webhook_payload_preset: str = Form("custom"),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     # "Test before save": probe the UNSAVED config the new-server form currently holds. Builds a
@@ -446,6 +449,7 @@ async def ui_test_server_config(
             webhook_method=webhook_method or None,
             webhook_headers_json=webhook_headers_json or None,
             webhook_body_template=webhook_body_template or None,
+            webhook_payload_preset=webhook_payload_preset,
         )
     except ValueError as exc:
         bad = ServerTestResponse(ok=False, detail=str(exc))
@@ -538,6 +542,7 @@ async def ui_update_server(
     webhook_method: str = Form(""),
     webhook_headers_json: str = Form(""),
     webhook_body_template: str = Form(""),
+    webhook_payload_preset: str = Form("custom"),
     repo: Repo = Depends(get_repo),
     engine: Engine = Depends(get_engine),
     templates: Jinja2Templates = Depends(get_templates),
@@ -561,6 +566,7 @@ async def ui_update_server(
             "webhook_method": webhook_method or None,
             "webhook_headers_json": webhook_headers_json or None,
             "webhook_body_template": webhook_body_template or None,
+            "webhook_payload_preset": webhook_payload_preset,
         }
         # Secret tri-state: leave "secret" out of fields to keep the stored token, or set None to
         # clear it; the write-core's exclude_unset dump reads absent=keep, explicit None=clear.
