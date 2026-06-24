@@ -9,6 +9,11 @@ Server row:
   * base_url              -> target URL (required)
   * webhook_headers_json  -> JSON object of header name -> value template
   * webhook_body_template -> Jinja2 body template (default: DEFAULT_BODY_TEMPLATE)
+  * webhook_payload_preset -> named app-managed payload (WebhookPreset). "custom"
+                              renders webhook_body_template (above); any other value
+                              renders a built-in template from servers/webhook_presets.py
+                              (e.g. "sonarr_radarr" — a subtitle-pruner-compatible payload).
+                              When a preset is active, webhook_body_template is ignored.
 
 SECURITY:
   * Header VALUES and the body are rendered through a Jinja2 SandboxedEnvironment

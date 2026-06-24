@@ -123,6 +123,13 @@ before you can use the app; once you do, the file is deleted automatically.
 In the web UI:
 1. Go to **Servers → Add a server**. Pick the type (Plex, Emby, Jellyfin,
    Audiobookshelf, or Webhook), fill in the base URL and API token, and save.
+
+   For a **Webhook** server you can also choose a **Payload preset**. `Custom` (the default) sends
+   your own Jinja2 body template; `Sonarr / Radarr` sends a minimal payload
+   (`eventType` + `instanceName` + `file_path`) compatible with apps that ingest Sonarr/Radarr
+   webhooks (e.g. subtitle-pruner). The Test button sends that preset's payload with
+   `eventType: "Test"` so the receiver can recognise it as a probe.
+
 2. On the server detail page, add a **Folder**: the path inside the container
    (e.g. `/data/media/tv`), the library/section ID that server uses for it,
    and the file extensions to watch (e.g. `mkv, mp4, avi`).
