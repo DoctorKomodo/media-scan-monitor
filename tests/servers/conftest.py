@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 
 from mediascanmonitor.config.runtime import ServerRuntime
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
 
 
@@ -31,6 +31,7 @@ def make_plex_runtime(
     webhook_method: str | None = None,
     webhook_headers_json: str | None = None,
     webhook_body_template: str | None = None,
+    webhook_payload_preset: WebhookPreset = WebhookPreset.custom,
 ) -> ServerRuntime:
     """Build a ServerRuntime; defaults to an enabled Plex server with no retries."""
     return ServerRuntime(
@@ -48,6 +49,7 @@ def make_plex_runtime(
         webhook_method=webhook_method,
         webhook_headers_json=webhook_headers_json,
         webhook_body_template=webhook_body_template,
+        webhook_payload_preset=webhook_payload_preset,
     )
 
 

@@ -6,7 +6,7 @@ import httpx
 import respx
 
 from mediascanmonitor.config.runtime import ServerRuntime
-from mediascanmonitor.db.models import ScanMode, ServerType
+from mediascanmonitor.db.models import ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
 from mediascanmonitor.servers import registry
 from mediascanmonitor.servers.webhook import WebhookAdapter
@@ -25,6 +25,7 @@ def webhook_runtime(
     webhook_method: str | None = None,
     webhook_headers_json: str | None = None,
     webhook_body_template: str | None = None,
+    webhook_payload_preset: WebhookPreset = WebhookPreset.custom,
 ) -> ServerRuntime:
     return make_runtime(
         type=ServerType.webhook,
@@ -35,6 +36,7 @@ def webhook_runtime(
         webhook_method=webhook_method,
         webhook_headers_json=webhook_headers_json,
         webhook_body_template=webhook_body_template,
+        webhook_payload_preset=webhook_payload_preset,
     )
 
 
@@ -189,3 +191,62 @@ async def test_test_failure_reports_status(client: httpx.AsyncClient) -> None:
     res = await adapter.test()
     assert res.ok is False
     assert "500" in res.detail
+
+
+@respx.mock
+async def test_sonarr_radarr_preset_emits_download_and_path(client: httpx.AsyncClient) -> None:
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    adapter = WebhookAdapter(
+        webhook_runtime(webhook_payload_preset=WebhookPreset.sonarr_radarr), client
+    )
+    res = await adapter.trigger(library_request(file_path="/data/tv/Show/ep.mkv"))
+    assert res.ok is True
+    body = json.loads(route.calls.last.request.content.decode())
+    assert body == {
+        "eventType": "Download",
+        "instanceName": "My Plex",  # make_plex_runtime default name
+        "file_path": "/data/tv/Show/ep.mkv",
+    }
+
+
+@respx.mock
+async def test_sonarr_radarr_preset_ignores_custom_body_template(
+    client: httpx.AsyncClient,
+) -> None:
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    adapter = WebhookAdapter(
+        webhook_runtime(
+            webhook_payload_preset=WebhookPreset.sonarr_radarr,
+            webhook_body_template='{"ignored": true}',
+        ),
+        client,
+    )
+    await adapter.trigger(library_request())
+    body = json.loads(route.calls.last.request.content.decode())
+    assert "ignored" not in body
+    assert body["eventType"] == "Download"
+
+
+@respx.mock
+async def test_sonarr_radarr_preset_test_button_announces_test_event(
+    client: httpx.AsyncClient,
+) -> None:
+    # subtitle-pruner short-circuits eventType == "Test", so the Test button must send it.
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    adapter = WebhookAdapter(
+        webhook_runtime(webhook_payload_preset=WebhookPreset.sonarr_radarr), client
+    )
+    res = await adapter.test()
+    assert res.ok is True
+    body = json.loads(route.calls.last.request.content.decode())
+    assert body["eventType"] == "Test"
+
+
+@respx.mock
+async def test_custom_preset_still_renders_default_template(client: httpx.AsyncClient) -> None:
+    # The default (custom) preset is unchanged: DEFAULT_BODY_TEMPLATE shape with an "event" key.
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    adapter = WebhookAdapter(webhook_runtime(), client)  # preset defaults to custom
+    await adapter.trigger(library_request())
+    body = json.loads(route.calls.last.request.content.decode())
+    assert body["event"] == "created"

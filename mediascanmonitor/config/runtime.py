@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from mediascanmonitor.config.defaults import IGNORE_DIRS
-from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType
+from mediascanmonitor.db.models import DebounceMode, ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ class ServerRuntime:
     webhook_method: str | None
     webhook_headers_json: str | None
     webhook_body_template: str | None
+    webhook_payload_preset: WebhookPreset
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,7 @@ def build_runtime_config(repo: Repo) -> RuntimeConfig:
             webhook_method=server.webhook_method,
             webhook_headers_json=server.webhook_headers_json,
             webhook_body_template=server.webhook_body_template,
+            webhook_payload_preset=server.webhook_payload_preset,
         )
         for folder in repo.list_folders(server_id):
             if not folder.enabled:

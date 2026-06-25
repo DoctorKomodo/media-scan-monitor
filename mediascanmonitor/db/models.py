@@ -34,6 +34,11 @@ class DebounceMode(StrEnum):
     trailing = "trailing"  # collapse a burst per (server_id, scan_key) after a window
 
 
+class WebhookPreset(StrEnum):
+    custom = "custom"  # render webhook_body_template (today's behaviour)
+    sonarr_radarr = "sonarr_radarr"  # subtitle-pruner-compatible payload
+
+
 class Server(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
@@ -51,6 +56,7 @@ class Server(SQLModel, table=True):
     webhook_method: str | None = None
     webhook_headers_json: str | None = None
     webhook_body_template: str | None = None
+    webhook_payload_preset: WebhookPreset = WebhookPreset.custom
     folders: list[Folder] = Relationship(
         back_populates="server",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},

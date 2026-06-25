@@ -33,6 +33,7 @@ def runtime_from_server(server: Server, secret: str | None) -> ServerRuntime:
         webhook_method=server.webhook_method,
         webhook_headers_json=server.webhook_headers_json,
         webhook_body_template=server.webhook_body_template,
+        webhook_payload_preset=server.webhook_payload_preset,
     )
 
 
@@ -57,6 +58,7 @@ def runtime_from_create(data: ServerCreate) -> ServerRuntime:
         webhook_method=data.webhook_method,
         webhook_headers_json=data.webhook_headers_json,
         webhook_body_template=data.webhook_body_template,
+        webhook_payload_preset=data.webhook_payload_preset,
     )
 
 

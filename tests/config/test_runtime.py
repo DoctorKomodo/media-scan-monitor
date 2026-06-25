@@ -19,6 +19,7 @@ from mediascanmonitor.db.models import (
     ScanMode,
     Server,
     ServerType,
+    WebhookPreset,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ def test_server_runtime_fields_frozen_slotted() -> None:
         webhook_method=None,
         webhook_headers_json=None,
         webhook_body_template=None,
+        webhook_payload_preset=WebhookPreset.custom,
     )
     assert sr.server_id == 1
     assert sr.secret == "token-abc"
@@ -66,6 +68,7 @@ def test_server_runtime_secret_excluded_from_repr() -> None:
         webhook_method=None,
         webhook_headers_json=None,
         webhook_body_template=None,
+        webhook_payload_preset=WebhookPreset.custom,
     )
     assert "super-secret-token" not in repr(sr)  # invariant 3: never in a repr
     assert sr.secret == "super-secret-token"  # still reachable by attribute
@@ -103,6 +106,7 @@ def test_runtime_config_fields_frozen_slotted() -> None:
         webhook_method=None,
         webhook_headers_json=None,
         webhook_body_template=None,
+        webhook_payload_preset=WebhookPreset.custom,
     )
     fr = FolderRoute(
         server_id=1,
@@ -160,6 +164,7 @@ def make_server(
     scan_mode: ScanMode = ScanMode.targeted,
     debounce_mode: DebounceMode = DebounceMode.trailing,
     enabled: bool = True,
+    webhook_payload_preset: WebhookPreset = WebhookPreset.custom,
 ) -> Server:
     return Server(
         id=server_id,
@@ -174,6 +179,7 @@ def make_server(
         debounce_window_seconds=30,
         retry_attempts=3,
         enabled=enabled,
+        webhook_payload_preset=webhook_payload_preset,
     )
 
 
@@ -317,3 +323,17 @@ def test_empty_repo_yields_empty_config() -> None:
     assert cfg.routes == ()
     assert cfg.watch_paths == frozenset()
     assert "@eaDir" in cfg.ignore_dirs
+
+
+def test_build_runtime_config_carries_webhook_payload_preset() -> None:
+    server = make_server(
+        1,
+        name="hook",
+        type=ServerType.webhook,
+        webhook_payload_preset=WebhookPreset.sonarr_radarr,
+    )
+    repo = FakeRepo(servers=[server], folders_by_server={}, secrets={1: None})
+
+    cfg = build_runtime_config(cast("Repo", repo))
+
+    assert cfg.servers[1].webhook_payload_preset == WebhookPreset.sonarr_radarr

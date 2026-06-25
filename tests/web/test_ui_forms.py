@@ -300,6 +300,34 @@ def test_ui_update_missing_server_returns_200_inline_error(
     assert resp.headers.get("hx-retarget") == "#save-error"
 
 
+def test_ui_create_webhook_persists_payload_preset(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+    engine,  # type: ignore[no-untyped-def]
+) -> None:
+    from mediascanmonitor.db.models import WebhookPreset
+
+    resp = auth_client.post(
+        "/ui/servers/new",
+        data={
+            "name": "Hook Preset",
+            "type": "webhook",
+            "scan_mode": "library",
+            "debounce_mode": "off",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+            "webhook_payload_preset": "sonarr_radarr",
+            "folder-0-path": "/data/tv",
+            "folder-0-extensions": "mkv",
+            "folder-0-enabled": "on",
+        },
+    )
+    assert resp.status_code == 204
+    created = next(s for s in repo.list_servers() if s.name == "Hook Preset")
+    assert created.webhook_payload_preset == WebhookPreset.sonarr_radarr
+
+
 def test_ui_update_duplicate_name_returns_inline_409(
     auth_client: httpx.Client,
     repo,  # type: ignore[no-untyped-def]

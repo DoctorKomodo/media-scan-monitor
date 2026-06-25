@@ -86,7 +86,16 @@
                placeholder='{"X-Token": "…"}'>
       </label>
     </div>
-    <label class="field">
+    <label class="field field-webhook-preset">
+      <span class="field-label">Payload preset</span>
+      <select name="webhook_payload_preset" id="webhook-preset-select">
+        {% for value, label in webhook_presets %}
+        <option value="{{ value }}"
+          {% if (creating and value == "custom") or (not creating and server.webhook_payload_preset == value) %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field field-webhook-body">
       <span class="field-label">Body template</span>
       <textarea name="webhook_body_template" rows="3"
                 placeholder='{"path": "{{ "{{path}}" }}"}'>{{ '' if creating else (server.webhook_body_template or '') }}</textarea>

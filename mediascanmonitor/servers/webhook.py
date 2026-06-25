@@ -9,6 +9,11 @@ Server row:
   * base_url              -> target URL (required)
   * webhook_headers_json  -> JSON object of header name -> value template
   * webhook_body_template -> Jinja2 body template (default: DEFAULT_BODY_TEMPLATE)
+  * webhook_payload_preset -> named app-managed payload (WebhookPreset). "custom"
+                              renders webhook_body_template (above); any other value
+                              renders a built-in template from servers/webhook_presets.py
+                              (e.g. "sonarr_radarr" — a subtitle-pruner-compatible payload).
+                              When a preset is active, webhook_body_template is ignored.
 
 SECURITY:
   * Header VALUES and the body are rendered through a Jinja2 SandboxedEnvironment
@@ -32,11 +37,12 @@ import httpx
 from jinja2 import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
-from mediascanmonitor.db.models import ScanMode, ServerType
+from mediascanmonitor.db.models import ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
 from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
 from mediascanmonitor.servers.http import request_with_retry
 from mediascanmonitor.servers.registry import register
+from mediascanmonitor.servers.webhook_presets import get_preset
 
 # autoescape=False: the body is JSON/text, not HTML; ``| tojson`` does the escaping.
 _ENV = SandboxedEnvironment(autoescape=False)
@@ -60,7 +66,7 @@ class WebhookAdapter(ServerAdapter):
         {ScanMode.targeted, ScanMode.library}
     )
 
-    def _context(self, req: ScanRequest) -> dict[str, Any]:
+    def _context(self, req: ScanRequest, *, is_test: bool = False) -> dict[str, Any]:
         return {
             # Use .value for the bare event name ("created"). FsEventType is a
             # StrEnum, so str(member) is also "created" — .value is explicit and
@@ -73,6 +79,7 @@ class WebhookAdapter(ServerAdapter):
             "library_id": req.library_id,
             "server_name": self.server.name,
             "secret": self.server.secret or "",
+            "is_test": is_test,
         }
 
     def _render(self, template: str, context: dict[str, Any]) -> str:
@@ -87,16 +94,21 @@ class WebhookAdapter(ServerAdapter):
             headers[str(key)] = self._render(str(value), context)
         return headers
 
-    async def _send(self, req: ScanRequest) -> TriggerResult:
+    async def _send(self, req: ScanRequest, *, is_test: bool = False) -> TriggerResult:
         url = self.server.base_url.strip()
         if not url:
             return TriggerResult(
                 ok=False, status_code=None, detail="webhook url (base_url) is empty"
             )
         method = (self.server.webhook_method or "POST").upper()
-        context = self._context(req)
+        context = self._context(req, is_test=is_test)
+        preset = self.server.webhook_payload_preset
+        if preset == WebhookPreset.custom:
+            template = self.server.webhook_body_template or DEFAULT_BODY_TEMPLATE
+        else:
+            template = get_preset(preset).body_template
         try:
-            body = self._render(self.server.webhook_body_template or DEFAULT_BODY_TEMPLATE, context)
+            body = self._render(template, context)
             headers = self._headers(context)
         except (TemplateError, ValueError, json.JSONDecodeError) as exc:
             return TriggerResult(ok=False, status_code=None, detail=f"{type(exc).__name__}: {exc}")
@@ -132,7 +144,7 @@ class WebhookAdapter(ServerAdapter):
             file_path="/__msm_test__",
             top_folder=None,
         )
-        result = await self._send(probe)
+        result = await self._send(probe, is_test=True)
         if result.ok:
             return TestResult(ok=True, detail="reachable")
         if result.status_code is not None:
