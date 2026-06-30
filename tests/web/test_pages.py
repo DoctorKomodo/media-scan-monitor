@@ -83,7 +83,9 @@ def test_webhook_method_is_a_select_with_stored_value_preselected(auth_client, r
 
 def test_base_url_label_is_endpoint_for_webhook(auth_client, repo) -> None:  # type: ignore[no-untyped-def]
     plex = _seed_server(repo)
-    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h"))
+    hook = repo.create_server(
+        ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h")
+    )
     assert "Endpoint URL" in auth_client.get(f"/servers/{hook.id}").text
     assert "Endpoint URL" not in auth_client.get(f"/servers/{plex}").text
     assert "Base URL" in auth_client.get(f"/servers/{plex}").text
@@ -91,7 +93,9 @@ def test_base_url_label_is_endpoint_for_webhook(auth_client, repo) -> None:  # t
 
 def test_token_and_test_hints_are_per_type(auth_client, repo) -> None:  # type: ignore[no-untyped-def]
     plex = _seed_server(repo)
-    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h"))
+    hook = repo.create_server(
+        ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h")
+    )
     plex_text = auth_client.get(f"/servers/{plex}").text
     hook_text = auth_client.get(f"/servers/{hook.id}").text
     # Webhook explains the token is optional and referenceable in templates as {{ secret }}.
