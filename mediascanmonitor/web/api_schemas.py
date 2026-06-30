@@ -134,6 +134,15 @@ class ServerTypeSpec:
     requires_secret: bool  # a token is mandatory at save time
     requires_base_url: bool  # base_url must be non-empty at save time
     is_webhook: bool  # exposes the webhook_* template fields
+    supports_secret: bool = True  # whether the token field is shown at all
+    # Label/placeholder for the base_url field. Media servers take a host:port base the
+    # adapter appends API paths to; a webhook takes the full endpoint URL it POSTs to.
+    base_url_label: str = "Base URL"
+    base_url_placeholder: str = "http://host:port"
+    # Hint shown under the token field — what the secret is for on this backend.
+    secret_hint: str = "Access token / API key for this server."
+    # Hint shown beside the Test button — what a connection test actually does here.
+    test_hint: str = "Checks the URL and token work."
 
 
 SERVER_TYPE_SPECS: dict[ServerType, ServerTypeSpec] = {
@@ -146,6 +155,15 @@ SERVER_TYPE_SPECS: dict[ServerType, ServerTypeSpec] = {
         requires_secret=True, requires_base_url=True, is_webhook=False
     ),
     ServerType.webhook: ServerTypeSpec(
-        requires_secret=False, requires_base_url=False, is_webhook=True
+        requires_secret=False,
+        requires_base_url=True,
+        is_webhook=True,
+        base_url_label="Endpoint URL",
+        base_url_placeholder="https://host/path",
+        secret_hint=(
+            "Optional, stored encrypted. Reference it in a header or the body template as "
+            "{{ secret }} — e.g. Authorization: Bearer {{ secret }}."
+        ),
+        test_hint="Sends a test event to the endpoint.",
     ),
 }

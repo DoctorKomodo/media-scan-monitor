@@ -11,7 +11,7 @@
     <button hx-post="/ui/servers/{{ server.id }}/test" hx-target="#test-result" hx-swap="innerHTML">
       Test
     </button>
-    <span class="test-hint muted">Sends a no-op request to confirm the URL and token work.</span>
+    <span class="test-hint muted">{{ test_hint }}</span>
   </div>
   <div id="test-result" class="test-result-slot"></div>
 </section>

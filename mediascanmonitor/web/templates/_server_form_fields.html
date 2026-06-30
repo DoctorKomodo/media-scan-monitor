@@ -43,9 +43,9 @@
     </div>
     {% endif %}
     <label class="field field-base_url">
-      <span class="field-label">Base URL</span>
+      <span class="field-label">{{ base_url_label }}</span>
       <input type="text" name="base_url" value="{{ '' if creating else server.base_url }}"
-             placeholder="http://host:port">
+             placeholder="{{ base_url_placeholder }}">
     </label>
     <div class="field field-secret{% if not creating %} token-field{% endif %}"
          {% if not creating %}data-has-secret="{{ 'true' if server.has_secret else 'false' }}"{% endif %}>
@@ -55,6 +55,7 @@
       {% else %}
       {% include "_token_field.html" %}
       {% endif %}
+      <span class="field-hint field-secret-hint">{{ secret_hint }}</span>
     </div>
   </div>
   <div class="toggles">
@@ -66,7 +67,7 @@
     <button type="button" hx-post="/ui/servers/test" hx-target="#test-result" hx-swap="innerHTML">
       Test connection
     </button>
-    <span class="test-hint muted">Checks the URL and token without saving.</span>
+    <span class="test-hint muted"><span class="test-hint-body">{{ test_hint }}</span> Nothing is saved yet.</span>
   </div>
   <div id="test-result" class="test-result-slot"></div>
   {% endif %}
@@ -76,8 +77,12 @@
     <div class="form-grid">
       <label class="field">
         <span class="field-label">Method</span>
-        <input type="text" name="webhook_method"
-               value="{{ '' if creating else (server.webhook_method or '') }}" placeholder="POST">
+        {% set current_method = "POST" if creating else (server.webhook_method or "POST") | upper %}
+        <select name="webhook_method">
+          {% for m in webhook_methods %}
+          <option value="{{ m }}" {% if m == current_method %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
       </label>
       <label class="field">
         <span class="field-label">Headers (JSON)</span>

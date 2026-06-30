@@ -71,6 +71,37 @@ def test_webhook_fields_only_shown_for_webhook_servers(auth_client: httpx.Client
     assert 'name="webhook_method"' in auth_client.get(f"/servers/{hook.id}").text
 
 
+def test_webhook_method_is_a_select_with_stored_value_preselected(auth_client, repo) -> None:  # type: ignore[no-untyped-def]
+    hook = repo.create_server(
+        ServerCreate(name="hook", type=ServerType.webhook, webhook_method="PUT")
+    )
+    text = auth_client.get(f"/servers/{hook.id}").text
+    # Method is a constrained dropdown now, not a free-text input, with the stored verb selected.
+    assert '<select name="webhook_method">' in text
+    assert '<option value="PUT" selected>PUT</option>' in text
+
+
+def test_base_url_label_is_endpoint_for_webhook(auth_client, repo) -> None:  # type: ignore[no-untyped-def]
+    plex = _seed_server(repo)
+    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h"))
+    assert "Endpoint URL" in auth_client.get(f"/servers/{hook.id}").text
+    assert "Endpoint URL" not in auth_client.get(f"/servers/{plex}").text
+    assert "Base URL" in auth_client.get(f"/servers/{plex}").text
+
+
+def test_token_and_test_hints_are_per_type(auth_client, repo) -> None:  # type: ignore[no-untyped-def]
+    plex = _seed_server(repo)
+    hook = repo.create_server(ServerCreate(name="hook", type=ServerType.webhook, base_url="https://h"))
+    plex_text = auth_client.get(f"/servers/{plex}").text
+    hook_text = auth_client.get(f"/servers/{hook.id}").text
+    # Webhook explains the token is optional and referenceable in templates as {{ secret }}.
+    assert "{{ secret }}" in hook_text
+    assert "{{ secret }}" not in plex_text
+    # Test-button hint reflects what the test does for each backend.
+    assert "Sends a test event to the endpoint." in hook_text
+    assert "Checks the URL and token work." in plex_text
+
+
 def test_server_detail_shows_folders_and_test_button(auth_client: httpx.Client, repo) -> None:  # type: ignore[no-untyped-def]
     sid = _seed_server(repo)
     resp = auth_client.get(f"/servers/{sid}")

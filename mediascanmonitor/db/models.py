@@ -43,7 +43,7 @@ class Server(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     type: ServerType
-    base_url: str = ""  # "" for pure webhook with full URL in template
+    base_url: str = ""  # target URL; for a webhook this is the full endpoint URL
     verify_tls: bool = True
     timeout_seconds: float = 10.0
     secret_encrypted: str | None = None  # Fernet token; never the plaintext
