@@ -38,6 +38,7 @@ from mediascanmonitor.engine import Engine
 from mediascanmonitor.observ.events_bus import EventRecord, EventsBus
 from mediascanmonitor.servers import registry
 from mediascanmonitor.servers.base import LibraryListResult
+from mediascanmonitor.servers.webhook import HTTP_METHODS
 from mediascanmonitor.servers.webhook_presets import WEBHOOK_PRESETS
 from mediascanmonitor.web.api_schemas import SERVER_TYPE_SPECS, ServerRead, ServerTestResponse
 from mediascanmonitor.web.deps import (
@@ -109,13 +110,18 @@ def _webhook_preset_options() -> list[tuple[str, str]]:
     return options
 
 
-def _type_specs() -> dict[str, dict[str, bool]]:
+def _type_specs() -> dict[str, dict[str, bool | str]]:
     """Serialize SERVER_TYPE_SPECS for the template/JS (the one place per-type rules live, §D)."""
     return {
         server_type.value: {
             "requires_secret": spec.requires_secret,
             "requires_base_url": spec.requires_base_url,
             "is_webhook": spec.is_webhook,
+            "supports_secret": spec.supports_secret,
+            "base_url_label": spec.base_url_label,
+            "base_url_placeholder": spec.base_url_placeholder,
+            "secret_hint": spec.secret_hint,
+            "test_hint": spec.test_hint,
             "supports_library_discovery": registry.get_adapter_class(
                 server_type
             ).supports_library_discovery,
@@ -180,6 +186,12 @@ async def server_new_page(
             "type_specs": _type_specs(),
             "scan_modes_by_type": _scan_modes_by_type(),
             "webhook_presets": _webhook_preset_options(),
+            "webhook_methods": list(HTTP_METHODS),
+            # Initial per-type strings for the first type; JS re-applies them on type change.
+            "base_url_label": SERVER_TYPE_SPECS[next(iter(ServerType))].base_url_label,
+            "base_url_placeholder": SERVER_TYPE_SPECS[next(iter(ServerType))].base_url_placeholder,
+            "secret_hint": SERVER_TYPE_SPECS[next(iter(ServerType))].secret_hint,
+            "test_hint": SERVER_TYPE_SPECS[next(iter(ServerType))].test_hint,
         },
     )
 
@@ -208,11 +220,16 @@ async def server_detail(
             "server": server,
             "debounce_modes": [m.value for m in DebounceMode],
             "is_webhook": SERVER_TYPE_SPECS[server.type].is_webhook,
+            "base_url_label": SERVER_TYPE_SPECS[server.type].base_url_label,
+            "base_url_placeholder": SERVER_TYPE_SPECS[server.type].base_url_placeholder,
+            "secret_hint": SERVER_TYPE_SPECS[server.type].secret_hint,
+            "test_hint": SERVER_TYPE_SPECS[server.type].test_hint,
             # A required token can be replaced but not cleared (clearing 422s in writes.py),
             # so the template only offers "Clear" when the type allows an empty secret.
             "secret_clearable": not SERVER_TYPE_SPECS[server.type].requires_secret,
             "library_discovery": registry.get_adapter_class(server.type).supports_library_discovery,
             "webhook_presets": _webhook_preset_options(),
+            "webhook_methods": list(HTTP_METHODS),
         },
     )
 

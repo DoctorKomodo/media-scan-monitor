@@ -40,9 +40,15 @@
     const editor = form.querySelector("[data-folder-editor]");
     function apply() {
       const spec = specs[typeSel.value] || {};
-      form.querySelector(".field-secret").style.display = spec.requires_secret ? "" : "none";
-      form.querySelector(".field-base_url").style.display = spec.requires_base_url ? "" : "none";
+      const secret = form.querySelector(".field-secret");
+      secret.style.display = spec.supports_secret ? "" : "none";
+      secret.querySelector(".field-secret-hint").textContent = spec.secret_hint;
+      const baseUrl = form.querySelector(".field-base_url");
+      baseUrl.style.display = spec.requires_base_url ? "" : "none";
+      baseUrl.querySelector(".field-label").textContent = spec.base_url_label;
+      baseUrl.querySelector("input").placeholder = spec.base_url_placeholder;
       form.querySelector(".field-webhook").style.display = spec.is_webhook ? "" : "none";
+      form.querySelector(".test-hint-body").textContent = spec.test_hint;
       const modes = modesByType[typeSel.value] || [];
       modeSel.innerHTML = "";
       for (const m of modes) {

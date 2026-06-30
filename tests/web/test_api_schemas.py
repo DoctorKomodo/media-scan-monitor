@@ -73,5 +73,7 @@ def test_server_type_specs_cover_every_type() -> None:
     assert set(SERVER_TYPE_SPECS) == set(ServerType)
     assert SERVER_TYPE_SPECS[ServerType.webhook].requires_secret is False
     assert SERVER_TYPE_SPECS[ServerType.webhook].is_webhook is True
+    # The webhook adapter sends to base_url (the target URL), so the UI must expose it.
+    assert SERVER_TYPE_SPECS[ServerType.webhook].requires_base_url is True
     assert SERVER_TYPE_SPECS[ServerType.plex].requires_secret is True
     assert SERVER_TYPE_SPECS[ServerType.plex].requires_base_url is True

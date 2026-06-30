@@ -47,6 +47,11 @@ from mediascanmonitor.servers.webhook_presets import get_preset
 # autoescape=False: the body is JSON/text, not HTML; ``| tojson`` does the escaping.
 _ENV = SandboxedEnvironment(autoescape=False)
 
+# HTTP methods offered in the UI's webhook Method <select>. POST is the default and by far
+# the common case; the rest cover the occasional REST-style endpoint. The adapter itself
+# accepts any verb (it just uppercases webhook_method), so this list only bounds the UI.
+HTTP_METHODS: tuple[str, ...] = ("POST", "PUT", "PATCH", "GET", "DELETE")
+
 DEFAULT_BODY_TEMPLATE = (
     "{\n"
     '  "event": {{ event_type | tojson }},\n'
