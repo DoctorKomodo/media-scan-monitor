@@ -204,7 +204,7 @@ async def test_sonarr_radarr_preset_emits_download_and_path(client: httpx.AsyncC
     body = json.loads(route.calls.last.request.content.decode())
     assert body == {
         "eventType": "Download",
-        "instanceName": "My Plex",  # make_plex_runtime default name
+        "instanceName": "media-scan-monitor",  # MSM identifies itself, not the target's label
         "file_path": "/data/tv/Show/ep.mkv",
     }
 
