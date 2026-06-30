@@ -37,6 +37,7 @@ import httpx
 from jinja2 import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
+from mediascanmonitor import APP_NAME
 from mediascanmonitor.db.models import ScanMode, ServerType, WebhookPreset
 from mediascanmonitor.pipeline.events import FsEventType, ScanRequest
 from mediascanmonitor.servers.base import ServerAdapter, TestResult, TriggerResult
@@ -83,6 +84,9 @@ class WebhookAdapter(ServerAdapter):
             "top_folder": req.top_folder,
             "library_id": req.library_id,
             "server_name": self.server.name,
+            # MSM's own identity (the caller), distinct from server_name (the user's label
+            # for this target). Presets use it so receivers log MSM, not the target's name.
+            "app_name": APP_NAME,
             "secret": self.server.secret or "",
             "is_test": is_test,
         }

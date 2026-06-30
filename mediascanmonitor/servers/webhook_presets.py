@@ -3,7 +3,7 @@
 A preset is an app-owned Jinja2 body template selected by key on the webhook server row
 (``Server.webhook_payload_preset``). The webhook adapter renders it with the SAME render
 context as a custom template, so a preset may use every context var (``file_path``,
-``server_name``, ``is_test``, ...).
+``server_name``, ``app_name``, ``is_test``, ...).
 
 Adding a format = one ``WebhookPreset`` enum member (``db/models.py``) + one entry here.
 ``WebhookPreset.custom`` is intentionally ABSENT: it is the "render the operator's own
@@ -17,12 +17,13 @@ from mediascanmonitor.db.models import WebhookPreset
 
 # Sonarr/Radarr-compatible. subtitle-pruner reads ``file_path`` directly and short-circuits
 # ``eventType == "Test"`` with a success response; ``is_test`` lets MSM's Test button send a
-# recognised Test ping while real file events send "Download". ``| tojson`` keeps the JSON
-# valid/escaped for paths and the literal eventType string.
+# recognised Test ping while real file events send "Download". ``instanceName`` identifies the
+# *sender*, so it is MSM's own ``app_name`` (not ``server_name``, which is the operator's label
+# for this target). ``| tojson`` keeps the JSON valid/escaped for paths and string literals.
 _SONARR_RADARR_TEMPLATE = (
     "{\n"
     '  "eventType": {{ ("Test" if is_test else "Download") | tojson }},\n'
-    '  "instanceName": {{ server_name | tojson }},\n'
+    '  "instanceName": {{ app_name | tojson }},\n'
     '  "file_path": {{ file_path | tojson }}\n'
     "}"
 )
