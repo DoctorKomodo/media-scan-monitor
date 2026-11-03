@@ -8,7 +8,9 @@
   <p class="muted">No password is set yet. Choose one to secure the dashboard.</p>
   <form method="post" action="/setup">
     <label>Password <input type="password" name="password" autofocus required /></label>
-    <button type="submit">Create password</button>
+    <div class="auth-actions">
+      <button type="submit">Create password</button>
+    </div>
   </form>
 </section>
 {% endblock %}

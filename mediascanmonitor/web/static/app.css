@@ -956,13 +956,34 @@ body.auth .error { width: 100%; max-width: 380px; margin: 0; }
 .auth-brand .sep { color: var(--signal); }
 .auth-card h1, .password-card h1 { margin: 0 0 0.3rem; font-size: 1.3rem; }
 .auth-card form, .password-card form { margin-top: 0.4rem; }
-.auth-card button[type="submit"], .password-card button[type="submit"] {
+/* Fields fill the card so their right edge lines up with the action row below (the global
+   min-width: 320px otherwise leaves them short of the card's content box). */
+.auth-card input[type="password"], .password-card input[type="password"] {
+  display: block;
   width: 100%;
-  margin-top: 0.3rem;
-  padding: 0.6rem;
+  min-width: 0;
 }
-.auth-card .danger { width: 100%; }
-.auth-links { text-align: center; font-size: 0.9rem; margin-top: 0.4rem; }
+/* Footer row: secondary link on the left, compact primary button on the right. Margins are
+   zeroed so the card's own padding is the only space below the last line. */
+.auth-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+}
+.auth-actions button { margin-left: auto; }
+/* A form-attribute submit (e.g. "Log out instead") dressed as a plain link. */
+.auth-actions .link-btn {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--signal);
+}
+.auth-actions .link-btn:hover { background: none; color: var(--text); text-decoration: underline; }
 
 /* Same card language as the auth screens, but for the Change-password form reached from
    within the app (nav visible) — it can't lean on body.auth's flex centering, so it
