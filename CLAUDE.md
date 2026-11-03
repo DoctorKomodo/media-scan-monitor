@@ -53,7 +53,15 @@ These override default behavior and apply to every change in this repo.
    routing/debounce logic must be covered. CI (`ruff` + `mypy` + `pytest`) must be green before
    merge.
 7. **Data / migrations.** DB schema changes go through an explicit migration step — never
-   silently break an existing `app.db`.
+   silently break an existing `app.db`. Any change that rewrites stored data (a migration, a
+   SQLite batch table rebuild, a data conversion) must **warn up front** — in the reply and the
+   PR description — that it rewrites the database, state the worst case, and tell the operator
+   to back up `config/app.db` before deploying. Verify it against a DB seeded with rows in
+   **every** table (children included, not just the table being altered);
+   `tests/db/test_migrations.py::test_upgrade_to_head_preserves_child_rows` does this for every
+   past revision. Migrations run with foreign keys **off** (`migrations/env.py`) because a batch
+   rebuild DROPs the parent table, which with FKs on fires `ON DELETE CASCADE` and wipes the
+   children. Migration 0005 did exactly that to a live instance, deleting every folder.
 8. **Resilience & observability.** Fail fast on startup/config errors; isolate per-server
    runtime failures (one dead backend never blocks the others); structured logging + metrics
    for paths that otherwise fail silently.
