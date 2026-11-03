@@ -26,6 +26,7 @@ def test_custom_is_not_in_the_registry() -> None:
 
 def test_get_preset_returns_the_definition() -> None:
     assert get_preset(WebhookPreset.sonarr_radarr).label == "Sonarr / Radarr"
+    assert get_preset(WebhookPreset.media_preview_generator).label == "Media Preview Generator"
 
 
 def test_get_preset_rejects_an_unregistered_key() -> None:

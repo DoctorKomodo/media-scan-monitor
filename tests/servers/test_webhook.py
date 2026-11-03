@@ -243,6 +243,34 @@ async def test_sonarr_radarr_preset_test_button_announces_test_event(
 
 
 @respx.mock
+async def test_media_preview_generator_preset_emits_file_path(client: httpx.AsyncClient) -> None:
+    # media_preview_generator's /api/webhooks/custom reads a top-level `file_path`.
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    adapter = WebhookAdapter(
+        webhook_runtime(webhook_payload_preset=WebhookPreset.media_preview_generator), client
+    )
+    res = await adapter.trigger(library_request(file_path='/data/tv/Show "x"/ep.mkv'))
+    assert res.ok is True
+    body = json.loads(route.calls.last.request.content.decode())
+    assert body == {"eventType": "Download", "file_path": '/data/tv/Show "x"/ep.mkv'}
+
+
+@respx.mock
+async def test_media_preview_generator_preset_test_button_sends_test_event(
+    client: httpx.AsyncClient,
+) -> None:
+    # The receiver answers eventType == "Test" without queueing a job for the probe path.
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    adapter = WebhookAdapter(
+        webhook_runtime(webhook_payload_preset=WebhookPreset.media_preview_generator), client
+    )
+    res = await adapter.test()
+    assert res.ok is True
+    body = json.loads(route.calls.last.request.content.decode())
+    assert body["eventType"] == "Test"
+
+
+@respx.mock
 async def test_custom_preset_still_renders_default_template(client: httpx.AsyncClient) -> None:
     # The default (custom) preset is unchanged: DEFAULT_BODY_TEMPLATE shape with an "event" key.
     route = respx.post(URL).mock(return_value=httpx.Response(200))

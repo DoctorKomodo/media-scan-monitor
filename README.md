@@ -133,6 +133,15 @@ In the web UI:
    webhooks (e.g. subtitle-pruner). The Test button sends that preset's payload with
    `eventType: "Test"` so the receiver can recognise it as a probe.
 
+   `Media Preview Generator` targets
+   [media_preview_generator](https://github.com/stevezau/media_preview_generator)'s custom
+   webhook. Point the URL at `http://<host>:<port>/api/webhooks/custom`, **not** its `/sonarr` or
+   `/radarr` endpoints: those read Sonarr's nested `episodeFile.path`, so they would ignore MSM's
+   events. Put its webhook token in the secret field and add the header
+   `{"X-Auth-Token": "{{ secret }}"}`. Set **Debounce** to `off`, because it batches bursts
+   itself and trailing debounce forwards only the last file per folder. Leave only **Created**
+   and **Moved in** checked, because it queues every path it receives, including deleted ones.
+
    Every server also has an **Event types** control: checkboxes for Created / Moved in /
    Deleted / Moved out, deciding which filesystem event types trigger a scan for that server.
    All four are checked by default. A generic webhook that only cares about new files, for

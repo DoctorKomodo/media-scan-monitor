@@ -28,6 +28,23 @@ _SONARR_RADARR_TEMPLATE = (
     "}"
 )
 
+# media_preview_generator (github.com/stevezau/media_preview_generator) — targets its
+# ``POST /api/webhooks/custom`` endpoint, which reads a top-level ``file_path`` (its Sonarr /
+# Radarr endpoints do NOT: they read ``episodeFile.path`` / ``movieFile.path``, so the
+# ``sonarr_radarr`` preset above would be ignored there as "no path"). ``eventType == "Test"``
+# is answered without queueing a job, so the Test button doesn't enqueue the probe path. Any
+# other ``eventType`` is ignored by the receiver; "Download" just reads well in its history.
+# Recommended server settings: debounce ``off`` (the receiver batches bursts itself; MSM's
+# trailing debounce keeps only the LAST file per folder) and event types ``created`` +
+# ``moved_to`` only (the endpoint queues any path it is given, deletes included). Auth: put the
+# receiver's webhook token in the secret field + header ``{"X-Auth-Token": "{{ secret }}"}``.
+_MEDIA_PREVIEW_GENERATOR_TEMPLATE = (
+    "{\n"
+    '  "eventType": {{ ("Test" if is_test else "Download") | tojson }},\n'
+    '  "file_path": {{ file_path | tojson }}\n'
+    "}"
+)
+
 
 @dataclass(frozen=True)
 class WebhookPresetDef:
@@ -39,6 +56,10 @@ WEBHOOK_PRESETS: dict[WebhookPreset, WebhookPresetDef] = {
     WebhookPreset.sonarr_radarr: WebhookPresetDef(
         label="Sonarr / Radarr",
         body_template=_SONARR_RADARR_TEMPLATE,
+    ),
+    WebhookPreset.media_preview_generator: WebhookPresetDef(
+        label="Media Preview Generator",
+        body_template=_MEDIA_PREVIEW_GENERATOR_TEMPLATE,
     ),
 }
 
