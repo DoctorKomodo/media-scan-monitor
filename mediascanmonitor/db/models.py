@@ -38,6 +38,7 @@ class DebounceMode(StrEnum):
 class WebhookPreset(StrEnum):
     custom = "custom"  # render webhook_body_template (today's behaviour)
     sonarr_radarr = "sonarr_radarr"  # subtitle-pruner-compatible payload
+    media_preview_generator = "media_preview_generator"  # its /api/webhooks/custom
 
 
 class FsEventType(StrEnum):
