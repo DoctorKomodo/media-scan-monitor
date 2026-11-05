@@ -7,7 +7,7 @@ name = "media-scan-monitor"
 version = "0.1.0"
 description = "Watch media folders and fan out targeted scan/refresh events to Plex, Emby, Jellyfin, Audiobookshelf, and generic webhooks."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 license = { file = "LICENSE" }
 authors = [{ name = "media-scan-monitor contributors" }]
 keywords = ["plex", "emby", "jellyfin", "audiobookshelf", "inotify", "media", "webhook"]
@@ -56,7 +56,7 @@ packages = ["mediascanmonitor"]
 # --------------------------------------------------------------------------- #
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py315"
 line-length = 100
 src = ["mediascanmonitor", "tests"]
 # Alembic-generated migrations are not hand-maintained to our lint/format rules. Markdown is
@@ -97,7 +97,7 @@ extend-immutable-calls = [
 "tests/**" = ["B"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.15"
 strict = true
 warn_unused_configs = true
 warn_redundant_casts = true

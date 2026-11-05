@@ -184,7 +184,7 @@ real gate. The recurring gotchas, fix them at the source:
 
 ## Deployment (target shape; built out across phases)
 
-- **Image:** multi-stage `python:3.14-slim`, runs as non-root, `tzdata` for log timestamps.
+- **Image:** multi-stage `python:3.15-slim`, runs as non-root, `tzdata` for log timestamps.
   Install dependencies from the committed `uv.lock` (`uv sync --locked --no-editable`, no dev
   extras) so the image, CI, and the dev box resolve identically. The `docker-build.yml` path
   filters are scoped to `mediascanmonitor/**` + `uv.lock` + `Dockerfile` (see `docs/PLAN.md` →

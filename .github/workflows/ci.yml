@@ -31,7 +31,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.2.0   # exact tag — setup-uv has no bare `v8` moving tag
         with:
           version: "0.13.7"        # pinned (verified); keep in sync with the Dockerfile
-          python-version: "3.14"
+          python-version: "3.15"
           enable-cache: true
 
       # --locked asserts uv.lock is in sync with pyproject.toml and fails otherwise,
