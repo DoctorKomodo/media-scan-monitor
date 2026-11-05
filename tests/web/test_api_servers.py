@@ -120,3 +120,24 @@ def test_test_endpoint_reports_failure(auth_client: TestClient, repo: Repo) -> N
 
 def test_test_endpoint_missing_is_404(auth_client: TestClient) -> None:
     assert auth_client.post("/api/servers/999/test").status_code == 404
+
+
+def test_patch_null_name_is_422_without_echoing_secret(auth_client: TestClient) -> None:
+    created = auth_client.post("/api/servers", json={"name": "hook", "type": "webhook"}).json()
+    resp = auth_client.patch(
+        f"/api/servers/{created['id']}", json={"name": None, "secret": "plaintext-token"}
+    )
+    assert resp.status_code == 422
+    assert "plaintext-token" not in resp.text
+    assert auth_client.get(f"/api/servers/{created['id']}").json()["name"] == "hook"
+
+
+def test_patch_null_retry_attempts_is_422(auth_client: TestClient) -> None:
+    created = auth_client.post("/api/servers", json={"name": "hook2", "type": "webhook"}).json()
+    resp = auth_client.patch(f"/api/servers/{created['id']}", json={"retry_attempts": None})
+    assert resp.status_code == 422
+
+
+def test_create_blank_name_is_422(auth_client: TestClient) -> None:
+    resp = auth_client.post("/api/servers", json={"name": "   ", "type": "webhook"})
+    assert resp.status_code == 422

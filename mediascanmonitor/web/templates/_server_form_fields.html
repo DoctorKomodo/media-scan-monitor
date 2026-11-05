@@ -18,7 +18,7 @@
   <label class="field">
     <span class="field-label">Name</span>
     <input type="text" name="name" value="{{ '' if creating else server.name }}"
-           {% if creating %}placeholder="Plex — Living Room" required{% endif %}>
+           {% if creating %}placeholder="Plex — Living Room"{% endif %} required>
   </label>
   <label class="toggle toggle-lg">
     <input type="checkbox" name="enabled" {% if creating or server.enabled %}checked{% endif %}>

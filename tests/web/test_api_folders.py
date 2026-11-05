@@ -103,3 +103,12 @@ def test_delete_folder_wrong_server_is_404(auth_client: TestClient) -> None:
     server_b = _make_server(auth_client)
     folder = auth_client.post(f"/api/servers/{server_a}/folders", json={"path": "/data/tv"}).json()
     assert auth_client.delete(f"/api/servers/{server_b}/folders/{folder['id']}").status_code == 404
+
+
+def test_patch_null_path_is_422(auth_client: TestClient) -> None:
+    server_id = _make_server(auth_client)
+    folder = auth_client.post(f"/api/servers/{server_id}/folders", json={"path": "/data/tv"}).json()
+    resp = auth_client.patch(
+        f"/api/servers/{server_id}/folders/{folder['id']}", json={"path": None}
+    )
+    assert resp.status_code == 422

@@ -19,7 +19,8 @@
 <section class="card">
   <div id="save-error"></div>
   <form class="settings-form" hx-post="/ui/servers/{{ server.id }}/update"
-        hx-target="#save-status" hx-swap="innerHTML">
+        hx-target="#save-status" hx-swap="innerHTML"
+        hx-on::before-request="if (event.target === this) { document.getElementById('save-status').replaceChildren(); document.getElementById('save-error').replaceChildren(); }">
     {% include "_server_form_fields.html" %}
 
     <fieldset class="form-section">

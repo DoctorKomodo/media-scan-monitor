@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from mediascanmonitor.db.models import DebounceMode, FsEventType, ScanMode, ServerType
-from mediascanmonitor.db.schemas import FolderCreate, ServerCreate, ServerUpdate
+from mediascanmonitor.db.schemas import FolderCreate, FolderUpdate, ServerCreate, ServerUpdate
 
 
 def test_server_create_defaults() -> None:
@@ -91,3 +91,57 @@ def test_folder_create_normalizes_path_and_extensions() -> None:
 def test_folder_create_rejects_relative_path() -> None:
     with pytest.raises(ValidationError):
         FolderCreate(path="relative/tv")  # absoluteness enforced at the boundary
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "name",
+        "type",
+        "base_url",
+        "verify_tls",
+        "timeout_seconds",
+        "scan_mode",
+        "debounce_mode",
+        "debounce_window_seconds",
+        "retry_attempts",
+        "enabled",
+        "webhook_payload_preset",
+    ],
+)
+def test_server_update_rejects_null_for_non_nullable_columns(field: str) -> None:
+    with pytest.raises(ValidationError):
+        ServerUpdate(**{field: None})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["secret", "webhook_method", "webhook_headers_json", "webhook_body_template", "event_types"],
+)
+def test_server_update_keeps_null_for_nullable_fields(field: str) -> None:
+    assert ServerUpdate(**{field: None}).model_dump(exclude_unset=True) == {field: None}
+
+
+def test_server_update_null_error_does_not_echo_secret() -> None:
+    with pytest.raises(ValidationError) as exc:
+        ServerUpdate(name=None, secret="plaintext-token")
+    assert "plaintext-token" not in str(exc.value)
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_server_names_must_not_be_blank(name: str) -> None:
+    with pytest.raises(ValidationError):
+        ServerCreate(name=name, type=ServerType.plex)
+    with pytest.raises(ValidationError):
+        ServerUpdate(name=name)
+
+
+@pytest.mark.parametrize("field", ["path", "enabled"])
+def test_folder_update_rejects_null_for_non_nullable_columns(field: str) -> None:
+    with pytest.raises(ValidationError):
+        FolderUpdate(**{field: None})
+
+
+@pytest.mark.parametrize("field", ["library_id", "extensions"])
+def test_folder_update_keeps_null_for_nullable_fields(field: str) -> None:
+    assert FolderUpdate(**{field: None}).model_dump(exclude_unset=True) == {field: None}
