@@ -30,7 +30,8 @@ the sample servers only when the DB has none, but always (re)sets the password.
 ## Logging in (e.g. with Playwright)
 
 1. `GET /login`, fill `input[type=password]` with the password, submit. Lands on `/`.
-2. Pages: `/` (dashboard), `/servers`, `/servers/{id}`, `/settings`, `/events`.
+2. Pages: `/` (dashboard, including the inotify gate setting), `/servers`, `/servers/new`,
+   `/servers/{id}`, `/events`, `/account/password`. There is no separate `/settings` page.
 
 If you edit `static/app.css` while the browser is open, the old stylesheet is cached —
 force a reload by swapping the `<link>` href to `/static/app.css?v=<ts>`.
