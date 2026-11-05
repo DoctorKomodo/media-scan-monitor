@@ -399,7 +399,7 @@ async def ui_browse_fs(
 @router.post("/ui/servers/new")
 async def ui_create_server_with_folders(
     request: Request,
-    name: str = Form(...),
+    name: str = Form(""),
     type: str = Form(...),
     base_url: str = Form(""),
     secret: str = Form(""),
@@ -421,6 +421,8 @@ async def ui_create_server_with_folders(
     # Combined create: one form builds the server AND its folders, written in one transaction.
     # On success we 204 + HX-Redirect to the new detail page; on any failure we render the
     # inline error (retargeted to #form-error) instead of a 500 — same pattern as ui_create_server.
+    if not name.strip():
+        return _error_partial(request, templates, "Server name must not be empty.", "#form-error")
     form = await request.form()
     try:
         server_data = ServerCreate(
@@ -577,7 +579,7 @@ async def ui_list_libraries(
 async def ui_update_server(
     request: Request,
     server_id: int,
-    name: str = Form(...),
+    name: str = Form(""),
     base_url: str = Form(""),
     secret: str = Form(""),
     clear_secret: bool = Form(False),
@@ -597,6 +599,8 @@ async def ui_update_server(
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     # Build the schema INSIDE the try: enum/validator failures -> ValueError -> inline error.
+    if not name.strip():
+        return _error_partial(request, templates, "Server name must not be empty.", "#save-error")
     # The folder editor now lives in the SAME form (combined save), so parse its rows here and
     # persist settings + folders atomically. apply_server_update_with_folders raises KeyError if
     # the server was deleted concurrently, HTTPException 422 (secret gate) / 409 (duplicate name).

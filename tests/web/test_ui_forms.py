@@ -1,6 +1,7 @@
 """/ui form handlers: success swaps a partial, 422 renders inline, the write-core rebuilds."""
 
 import httpx
+import pytest
 import respx
 
 from mediascanmonitor.db.models import ServerType
@@ -441,3 +442,63 @@ def test_ui_update_duplicate_name_returns_inline_409(
     assert resp.headers.get("hx-retarget") == "#save-error"
     assert "already exists" in resp.text.lower()
     assert repo.get_server(oid).name == "Other"  # nothing persisted (rolled back)
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_ui_update_blank_name_renders_inline_error(
+    auth_client: httpx.Client,
+    repo,
+    engine,  # type: ignore[no-untyped-def]
+    name: str,
+) -> None:
+    server_id = _seed_plex(repo)
+    before = engine.rebuild_calls
+    resp = auth_client.post(
+        f"/ui/servers/{server_id}/update",
+        data={
+            "name": name,
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+            "debounce_window_seconds": "30",
+            "retry_attempts": "3",
+            "timeout_seconds": "10",
+        },
+    )
+    assert resp.status_code == 200  # htmx discards non-2xx, so a 422 would be invisible
+    assert resp.headers.get("hx-retarget") == "#save-error"
+    assert "must not be empty" in resp.text
+    assert repo.get_server(server_id).name == "Plex"
+    assert engine.rebuild_calls == before
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_ui_create_blank_name_renders_inline_error(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+    name: str,
+) -> None:
+    resp = auth_client.post(
+        "/ui/servers/new",
+        data={
+            "name": name,
+            "type": "plex",
+            "secret": "tok",
+            "scan_mode": "targeted",
+            "debounce_mode": "trailing",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("hx-retarget") == "#form-error"
+    assert "must not be empty" in resp.text
+    assert repo.list_servers() == []
+
+
+def test_server_detail_name_field_is_required(
+    auth_client: httpx.Client,
+    repo,  # type: ignore[no-untyped-def]
+) -> None:
+    server_id = _seed_plex(repo)
+    page = auth_client.get(f"/servers/{server_id}").text
+    assert 'name="name" value="Plex"' in page
+    tag = page.split('name="name"', 1)[1].split(">", 1)[0]
+    assert "required" in tag

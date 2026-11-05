@@ -19,6 +19,21 @@ from mediascanmonitor.db.models import (
 from mediascanmonitor.normalize import normalize_extension, normalize_path
 
 
+def _require_not_null[T](value: T | None) -> T:
+    # Partial-update models type every field optional so it can be omitted, but an explicit null
+    # on a NOT NULL column must fail here rather than as an IntegrityError at commit. Field-level
+    # on purpose: a model-level validator's error echoes the whole body, plaintext secret included.
+    if value is None:
+        raise ValueError("must not be null")
+    return value
+
+
+def _require_non_blank_name(value: str) -> str:
+    if not value.strip():
+        raise ValueError("server name must not be empty")
+    return value
+
+
 class ServerCreate(BaseModel):
     name: str
     type: ServerType
@@ -38,6 +53,11 @@ class ServerCreate(BaseModel):
     webhook_body_template: str | None = None
     webhook_payload_preset: WebhookPreset = WebhookPreset.custom
     event_types: list[FsEventType] = Field(default_factory=lambda: list(FsEventType))
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        return _require_non_blank_name(value)
 
 
 class ServerUpdate(BaseModel):
@@ -60,6 +80,28 @@ class ServerUpdate(BaseModel):
     webhook_body_template: str | None = None
     webhook_payload_preset: WebhookPreset | None = None
     event_types: list[FsEventType] | None = None
+
+    @field_validator(
+        "name",
+        "type",
+        "base_url",
+        "verify_tls",
+        "timeout_seconds",
+        "scan_mode",
+        "debounce_mode",
+        "debounce_window_seconds",
+        "retry_attempts",
+        "enabled",
+        "webhook_payload_preset",
+    )
+    @classmethod
+    def _not_null[T](cls, value: T | None) -> T:
+        return _require_not_null(value)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        return _require_non_blank_name(value)
 
 
 class FolderCreate(BaseModel):
@@ -96,12 +138,16 @@ class FolderUpdate(BaseModel):
     extensions: list[str] | None = None
     enabled: bool | None = None
 
+    @field_validator("enabled")
+    @classmethod
+    def _enabled_not_null(cls, value: bool | None) -> bool:
+        return _require_not_null(value)
+
     @field_validator("path")
     @classmethod
-    def _normalize_and_require_absolute(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = normalize_path(value)
+    def _normalize_and_require_absolute(cls, value: str | None) -> str:
+        path = _require_not_null(value)
+        normalized = normalize_path(path)
         if not os.path.isabs(normalized):
             raise ValueError(f"folder path must be absolute, got {value!r}")
         return normalized
