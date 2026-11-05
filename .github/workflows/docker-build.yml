@@ -2,7 +2,7 @@
 #
 # Job graph:
 #   smoke  → build amd64 (--load) + assert non-root / /health / migrations
-#   publish → (needs: smoke) build linux/amd64,linux/arm64 + push to GHCR
+#   publish → (needs: smoke) build linux/amd64 + push to GHCR
 #
 # On PRs: both jobs run but the publish job does not push (push: false).
 # On app-v2 pushes: publishes ghcr.io/<owner>/media-scan-monitor:app-v2.
@@ -46,9 +46,8 @@ jobs:
   #   2. GET /health → HTTP 200, body contains "ok"
   #   3. /config/app.db migrated to Alembic head; domain tables present
   #
-  # Buildx cannot --load a multi-platform image, so the smoke build is
-  # amd64-only. The publish job re-runs the build for both arches (incremental
-  # via the shared GHA cache).
+  # The publish job re-runs the same amd64 build (incremental via the shared
+  # GHA cache).
   # ─────────────────────────────────────────────────────────────────────────────
   smoke:
     runs-on: ubuntu-latest
@@ -189,9 +188,8 @@ jobs:
           docker volume rm msm-smoke-config || true  # named volume; `rm -v` only drops anonymous ones
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # publish: multi-arch (amd64 + arm64) build-and-push, gated on smoke passing.
+  # publish: amd64 build-and-push, gated on smoke passing.
   #
-  # arm64 is preserved for NAS targets (Synology, QNAP).
   # Push is gated on github.event_name != 'pull_request' — PRs run the job but
   # do not write to GHCR.
   #
@@ -211,9 +209,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -239,11 +234,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push (linux/amd64, linux/arm64)
+      - name: Build and push (linux/amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

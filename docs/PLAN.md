@@ -313,7 +313,7 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
   `pyproject.toml` + `uv.lock` + `Dockerfile`, ensure `uv.lock` is in the build context, keep
-  the multi-arch GHCR publish, and add an image smoke test (`docker run … --help`).
+  the GHCR publish, and add an image smoke test (`docker run … --help`).
 
 ---
 

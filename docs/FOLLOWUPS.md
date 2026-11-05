@@ -42,7 +42,7 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       libyaml extension (only `uvicorn[standard]` pulls it in). Update every declaration together,
       including the hard-coded `python3.14` ensurepip path in the `Dockerfile`.
 - [ ] Bump GitHub Actions majors: `checkout` v4→v7, `setup-uv` v8→v10, `setup-buildx` v3→v4,
-      `build-push` v6→v7, `setup-qemu` v3→v4, `login` v3→v4, `metadata` v5→v6. Workflows can't be
+      `build-push` v6→v7, `login` v3→v4, `metadata` v5→v6. Workflows can't be
       exercised locally, so do this separately and watch a real run.
 
 ## Later — targeted scans for the non-Plex backends
