@@ -5,7 +5,7 @@ tested explicitly. Secrets live only as Fernet ciphertext in `Server.secret_encr
 plaintext never touches a model field.
 
 Forward references (``list[Folder]``, ``list[FileType]``) are left UNQUOTED and this module —
-like the rest of the package — uses no ``from __future__ import annotations``: on Python 3.14
+like the rest of the package — uses no ``from __future__ import annotations``: on Python 3.14+
 PEP 649 defers annotation evaluation, so SQLModel/SQLAlchemy resolve relationship targets to the
 real classes when the mappers configure. The PEP 563 future import would instead stringize the
 annotation to ``"list['Folder']"`` and break mapper configuration.

@@ -244,7 +244,7 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
 
 ## Deployment
 
-- **Dockerfile:** multi-stage `python:3.14-slim` (build venv → slim runtime), `tzdata`, run
+- **Dockerfile:** multi-stage `python:3.15-slim` (build venv → slim runtime), `tzdata`, run
   as non-root. Deps (pinned in `pyproject.toml`): `fastapi`, `uvicorn[standard]`, `httpx`,
   `pydantic>=2`, `sqlmodel`, `asyncinotify`, `jinja2`, `tenacity`, `structlog`,
   `prometheus-client`, `cryptography`, `argon2-cffi` (or `passlib[argon2]`). No bash/curl/
@@ -310,7 +310,7 @@ Server-rendered Jinja2 + htmx; SSE for the live feed.
   fresh install is never wedged. Only headless `--no-web` keeps the Bash-style block/exit
   behavior (no UI to recover through), overridable by the gate-override env.
 - **CI:** `ci.yml` installs via `uv sync --locked --extra dev` (lockfile-enforced) on Python
-  3.14, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
+  3.15, then runs `ruff` + `mypy` + `pytest`. When the new image lands, update
   `docker-build.yml`: change path filters from `plex_monitor.sh` to `mediascanmonitor/**` +
   `pyproject.toml` + `uv.lock` + `Dockerfile`, ensure `uv.lock` is in the build context, keep
   the GHCR publish, and add an image smoke test (`docker run … --help`).
