@@ -34,14 +34,16 @@ def _set_server_folders(server: Server, folders: list[FolderCreate]) -> None:
     """
     server.folders.clear()
     for data in folders:
-        folder = Folder(
+        # server_id/folder_id are filled in by the relationship on flush.
+        folder = Folder(  # type: ignore[call-arg]
             path=data.path,
             library_id=data.library_id,
             library_name=data.library_name,
             enabled=data.enabled,
         )
         for ext in data.extensions:
-            folder.filetypes.append(FileType(extension=ext))
+            # folder_id set by the relationship on flush
+            folder.filetypes.append(FileType(extension=ext))  # type: ignore[call-arg]
         server.folders.append(folder)
 
 
@@ -196,7 +198,8 @@ class Repo:
                 enabled=data.enabled,
             )
             for ext in data.extensions:
-                folder.filetypes.append(FileType(extension=ext))
+                # folder_id set by the relationship on flush
+                folder.filetypes.append(FileType(extension=ext))  # type: ignore[call-arg]
             session.add(folder)
             session.commit()
             return folder
@@ -242,7 +245,7 @@ class Repo:
                         normalized.append(norm)
                 for ext in normalized:
                     # folder_id set by the relationship
-                    folder.filetypes.append(FileType(extension=ext))
+                    folder.filetypes.append(FileType(extension=ext))  # type: ignore[call-arg]
             session.commit()  # folder is session-tracked from get(); no add() needed
             _ = folder.filetypes  # force-load while the session is open
             return folder

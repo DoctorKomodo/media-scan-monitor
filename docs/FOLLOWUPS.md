@@ -37,6 +37,14 @@ Add a pointer here when you defer something to a later phase; **remove the item 
       httpx2 support or those tests move to `httpx2.MockTransport`. Documented dep blocker (rule 1) —
       revisit when respx supports httpx2. → phase3-01 Task 4 conftest
 
+- [ ] Move to Python 3.15 (rule 1: stable since 3.15.0, now 3.15.2). No blocker: the suite and
+      `mypy` pass on `python:3.15-slim`. `pyyaml` has no `cp315` wheel yet and builds without its
+      libyaml extension (only `uvicorn[standard]` pulls it in). Update every declaration together,
+      including the hard-coded `python3.14` ensurepip path in the `Dockerfile`.
+- [ ] Bump GitHub Actions majors: `checkout` v4→v7, `setup-uv` v8→v10, `setup-buildx` v3→v4,
+      `build-push` v6→v7, `setup-qemu` v3→v4, `login` v3→v4, `metadata` v5→v6. Workflows can't be
+      exercised locally, so do this separately and watch a real run.
+
 ## Later — targeted scans for the non-Plex backends
 
 - [ ] Per-folder targeted scans for Emby/Jellyfin/Audiobookshelf (Phase 2 ships library-refresh
