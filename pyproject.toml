@@ -15,32 +15,32 @@ keywords = ["plex", "emby", "jellyfin", "audiobookshelf", "inotify", "media", "w
 # NOTE (project rule): every version below is the current stable release verified
 # against PyPI at add-time (never pinned from memory). Bump deliberately, re-verifying.
 dependencies = [
-    "fastapi==0.137.1",
-    "uvicorn[standard]==0.49.0",
+    "fastapi==0.162.0",
+    "uvicorn[standard]==0.54.0",
     "httpx==0.28.1",
-    "pydantic==2.13.4",
-    "sqlmodel==0.0.38",
-    "alembic==1.18.4",
+    "pydantic==2.14.3",
+    "sqlmodel==0.0.48",
+    "alembic==1.20.1",
     "asyncinotify==4.4.4",
     "jinja2==3.1.6",
-    "tenacity==9.1.4",
+    "tenacity==9.2.1",
     "structlog==26.1.0",
-    "prometheus-client==0.25.0",
-    "cryptography==49.0.0",
+    "prometheus-client==0.26.0",
+    "cryptography==50.0.2",
     "argon2-cffi==25.1.0",
     # Starlette SessionMiddleware signs the session cookie with itsdangerous (optional
     # Starlette dep, not installed transitively); python-multipart parses Form() POSTs.
     # Both verified current-stable on PyPI at add-time (2026-06-21).
     "itsdangerous==2.2.0",
-    "python-multipart==0.0.32",
+    "python-multipart==0.0.33",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "ruff==0.15.17",
-    "mypy==2.1.0",
-    "pytest==9.1.0",
-    "pytest-asyncio==1.4.0",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
     "respx==0.23.1",
 ]
 
@@ -59,8 +59,9 @@ packages = ["mediascanmonitor"]
 target-version = "py314"
 line-length = 100
 src = ["mediascanmonitor", "tests"]
-# Alembic-generated migrations are not hand-maintained to our lint/format rules.
-extend-exclude = ["mediascanmonitor/migrations"]
+# Alembic-generated migrations are not hand-maintained to our lint/format rules. Markdown is
+# excluded because ruff 0.16+ formats ```python fences by default; plan docs are a record, not code.
+extend-exclude = ["mediascanmonitor/migrations", "*.md"]
 
 [tool.ruff.lint]
 select = [
@@ -115,6 +116,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra"
 filterwarnings = [
     # Starlette 1.3.x deprecates httpx-backed TestClient in favour of httpx2; migrating httpx→httpx2

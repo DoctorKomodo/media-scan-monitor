@@ -9,8 +9,8 @@
 #   python:3.14-slim  — justified by requires-python = ">=3.14" (pyproject.toml)
 #                       and CI python-version: "3.14" (.github/workflows/ci.yml).
 #                       Verify the current tag before building (Rule 1).
-#   uv 0.11.21        — pinned to the same version CI installs via setup-uv
-#                       (ci.yml `version: "0.11.21"`).  Keep in sync.
+#   uv 0.13.7        — pinned to the same version CI installs via setup-uv
+#                       (ci.yml `version: "0.13.7"`).  Keep in sync.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@
 FROM python:3.14-slim AS builder
 
 # Bring in the uv binary.  The tag MUST match ci.yml `setup-uv` `version:`.
-COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -60,6 +60,12 @@ FROM python:3.14-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# The app runs from the uv-built venv and never needs pip at runtime. Remove the base image's
+# copy (and ensurepip's bundled wheel): pip vendors urllib3, msgpack, certifi and requests, so
+# leaving it ships unused packages that scanners flag and that uv.lock cannot pin or upgrade.
+RUN python -m pip uninstall --yes pip \
+    && rm -rf /usr/local/lib/python3.14/ensurepip/_bundled
 
 # Create a non-root group and user with fixed UID/GID 1000.  The fixed UID
 # lets host bind-mount ownership be set predictably with chown 1000:1000
