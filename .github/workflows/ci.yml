@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0   # exact tag — setup-uv has no bare `v8` moving tag
+        uses: astral-sh/setup-uv@v10.3.3   # setup-uv publishes no moving major tags
         with:
           version: "0.13.7"        # pinned (verified); keep in sync with the Dockerfile
           python-version: "3.15"
